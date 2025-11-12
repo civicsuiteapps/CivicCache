@@ -60,6 +60,20 @@ CREATE TABLE congress_members (
     term_start_date TEXT,             -- ISO 8601 date
     term_end_date TEXT,               -- ISO 8601 date
 
+    -- Service history (from Congress.gov API)
+    first_elected_year INTEGER,       -- Year first elected to Congress
+    total_years_served INTEGER,       -- Total years in Congress
+    total_terms_served INTEGER,       -- Total number of terms served
+    current_leadership_role TEXT,     -- Current leadership position (e.g., "Speaker of the House")
+
+    -- Legislative activity (from Congress.gov API)
+    sponsored_bills_count INTEGER,    -- Total bills/resolutions sponsored
+    cosponsored_bills_count INTEGER,  -- Total bills/resolutions cosponsored
+
+    -- Official portrait (from Congress.gov API)
+    depiction_url TEXT,               -- URL to official portrait image
+    depiction_attribution TEXT,       -- Image attribution/credit
+
     -- Metadata
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -376,11 +390,15 @@ INSERT INTO metadata (key, value) VALUES
     ('fec_data_range', '1979-2026');
 ```
 
-## Database Statistics (Estimated)
+## Database Statistics (Current)
 
-| Table | Estimated Rows | Purpose |
-|-------|----------------|---------|
-| congress_members | 537 | Current Congress |
+| Table | Rows | Purpose |
+|-------|------|---------|
+| congress_members | 537 | Current Congress with full metadata |
+| legislation | 10,798 | Bills from 119th Congress |
+| legislation_summaries | ~10,000 | Bill summaries and analysis |
+| legislation_sponsors | ~10,000 | Bill sponsorship records |
+| legislation_subjects | ~50,000 | Bill subject tags |
 | states | 56 | US states + territories |
 | congressional_districts | 444 | District metadata |
 | candidates | ~50,000+ | All FEC candidates (1979-2026) |
@@ -388,7 +406,9 @@ INSERT INTO metadata (key, value) VALUES
 | candidate_committee_linkages | ~100,000+ | Candidate-committee relationships |
 | contributions | ~1,000,000+ | Sampled contribution records |
 
-**Estimated Database Size**: 100-500 MB (without full GeoJSON and full contributions)
+**Current Database Size**: 164 MB (with legislation summaries, without full legislative actions)
+
+**Note**: Legislative actions for each bill are available via Congress.gov API on-demand to reduce database size.
 
 ## Query Examples
 
@@ -460,6 +480,55 @@ SELECT
 FROM congress_members
 GROUP BY chamber, current_party
 ORDER BY chamber, count DESC;
+```
+
+### Most senior members of Congress
+
+```sql
+-- Find longest-serving members
+SELECT
+    full_name,
+    chamber,
+    state_code,
+    first_elected_year,
+    total_years_served,
+    total_terms_served,
+    current_leadership_role
+FROM congress_members
+WHERE total_years_served IS NOT NULL
+ORDER BY total_years_served DESC
+LIMIT 10;
+```
+
+### Congressional leadership roster
+
+```sql
+-- Get all current congressional leaders
+SELECT
+    full_name,
+    chamber,
+    current_party,
+    current_leadership_role
+FROM congress_members
+WHERE current_leadership_role IS NOT NULL
+ORDER BY chamber, current_party;
+```
+
+### Most active legislators
+
+```sql
+-- Members with most sponsored legislation
+SELECT
+    full_name,
+    chamber,
+    state_code,
+    sponsored_bills_count,
+    cosponsored_bills_count,
+    (sponsored_bills_count + cosponsored_bills_count) as total_legislative_activity
+FROM congress_members
+WHERE sponsored_bills_count IS NOT NULL
+ORDER BY total_legislative_activity DESC
+LIMIT 20;
 ```
 
 ## Performance Considerations

@@ -5,7 +5,13 @@ A comprehensive data caching and processing system for Congressional and campaig
 ## Overview
 
 CivicCache extracts, processes, and maintains a SQLite database of:
-- Congressional members (119th Congress)
+- Congressional members (119th Congress) with full metadata
+  - Contact information, portraits, service history
+  - Leadership roles, legislative activity counts
+  - Years in Congress, bills sponsored/cosponsored
+- Legislation (119th Congress - 10,798 bills)
+  - Full bill text summaries
+  - Sponsorship and subject tags
 - Congressional district boundaries (GeoJSON)
 - Federal Election Commission (FEC) campaign finance data (1979-2026)
 - State and territory reference data
@@ -27,10 +33,14 @@ This project serves as the data backend for CivicScope, similar to how Executive
   - Operating expenditures
   - Inter-committee transactions
 
-**Potential Additional Sources**:
-- Congress.gov API (real-time legislative data)
+**Active API Sources**:
+- Congress.gov API (legislation, member metadata, contact information)
+  - Bills and resolutions (119th Congress)
+  - Member service history and portraits
+  - Leadership roles and legislative activity counts
+
+**Additional Potential Sources**:
 - OpenFEC API (current campaign finance)
-- ProPublica Congress API
 - GovTrack.us API
 
 ## Project Structure

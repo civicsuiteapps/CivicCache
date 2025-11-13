@@ -234,8 +234,9 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
                     legislation_id, bioguide_id, full_name,
                     first_name, last_name, middle_name,
                     party, state, district,
-                    is_original_cosponsor, sponsorship_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_original_cosponsor, sponsorship_date,
+                    is_primary_sponsor
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 bill_id,
                 sponsor.get('bioguideId'),
@@ -247,7 +248,8 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
                 sponsor.get('state'),
                 sponsor.get('district'),
                 0,  # Primary sponsor, not cosponsor
-                bill_details.get('introducedDate')
+                bill_details.get('introducedDate'),
+                1   # is_primary_sponsor = 1
             ))
         except Exception as e:
             print(f"  ⚠️  Error importing sponsor: {e}")
@@ -263,8 +265,9 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
                     legislation_id, bioguide_id, full_name,
                     first_name, last_name, middle_name,
                     party, state, district,
-                    is_original_cosponsor, sponsorship_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_original_cosponsor, sponsorship_date,
+                    is_primary_sponsor
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 bill_id,
                 cosponsor.get('bioguideId'),
@@ -276,7 +279,8 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
                 cosponsor.get('state'),
                 cosponsor.get('district'),
                 1 if cosponsor.get('isOriginalCosponsor') == 'True' else 0,
-                cosponsor.get('sponsorshipDate')
+                cosponsor.get('sponsorshipDate'),
+                0   # is_primary_sponsor = 0 (this is a cosponsor)
             ))
         except Exception as e:
             print(f"  ⚠️  Error importing cosponsor: {e}")

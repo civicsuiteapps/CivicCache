@@ -397,7 +397,7 @@ INSERT INTO metadata (key, value) VALUES
 | congress_members | 537 | Current Congress with full metadata |
 | legislation | 10,798 | Bills from 119th Congress |
 | legislation_summaries | ~10,000 | Bill summaries and analysis |
-| legislation_sponsors | ~10,000 | Bill sponsorship records |
+| legislation_sponsors | 114,164 | Bill sponsorship records (10,789 primary + 103,375 cosponsors) |
 | legislation_subjects | ~50,000 | Bill subject tags |
 | states | 56 | US states + territories |
 | congressional_districts | 444 | District metadata |
@@ -529,6 +529,52 @@ FROM congress_members
 WHERE sponsored_bills_count IS NOT NULL
 ORDER BY total_legislative_activity DESC
 LIMIT 20;
+```
+
+### Bill sponsors and cosponsors
+
+```sql
+-- Get primary sponsor and all cosponsors for a bill
+SELECT
+    l.id,
+    l.title,
+    ls.full_name,
+    ls.party,
+    ls.state,
+    CASE
+        WHEN ls.is_primary_sponsor = 1 THEN 'Primary Sponsor'
+        ELSE 'Cosponsor'
+    END as sponsor_type,
+    ls.sponsorship_date
+FROM legislation l
+JOIN legislation_sponsors ls ON l.id = ls.legislation_id
+WHERE l.id = '119-hr-5815'
+ORDER BY ls.is_primary_sponsor DESC, ls.sponsorship_date;
+
+-- Get only the primary sponsor of a bill
+SELECT
+    l.id,
+    l.title,
+    ls.full_name as primary_sponsor,
+    ls.party,
+    ls.state
+FROM legislation l
+JOIN legislation_sponsors ls ON l.id = ls.legislation_id AND ls.is_primary_sponsor = 1
+WHERE l.id = '119-hr-5815';
+
+-- Find bills sponsored by a specific member
+SELECT
+    l.id,
+    l.title,
+    l.introduced_date,
+    COUNT(cs.id) as cosponsor_count
+FROM legislation l
+JOIN legislation_sponsors ls ON l.id = ls.legislation_id AND ls.is_primary_sponsor = 1
+LEFT JOIN legislation_sponsors cs ON l.id = cs.legislation_id AND cs.is_primary_sponsor = 0
+WHERE ls.bioguide_id = 'B000944'  -- Example: Sherrod Brown
+GROUP BY l.id
+ORDER BY l.introduced_date DESC
+LIMIT 10;
 ```
 
 ## Performance Considerations

@@ -186,6 +186,9 @@ def extract_congress_gov_data(member: Dict) -> Dict[str, Any]:
 
         # Nickname
         'nickname': nickname,
+
+        # Birth year
+        'birth_year': member.get('birthYear'),
     }
 
 

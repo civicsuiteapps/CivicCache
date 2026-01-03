@@ -1,0 +1,239 @@
+{
+  "name": "Cache Automation - Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "judicial-trigger",
+      "name": "Judicial Trigger (Sun 2AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "executive-trigger",
+      "name": "Executive Trigger (Sun 3AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "civic-trigger",
+      "name": "Civic Trigger (Daily 4AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 700]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5002/run-pipeline",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project",
+              "value": "judicial"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "run-judicial",
+      "name": "Run JudicialCache Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5002/run-pipeline",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project",
+              "value": "executive"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "run-executive",
+      "name": "Run ExecutiveCache Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 500]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5002/run-pipeline",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project",
+              "value": "civic"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 7200000
+        }
+      },
+      "id": "run-civic",
+      "name": "Run CivicCache Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success-j",
+      "name": "Success? (J)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success-e",
+      "name": "Success? (E)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success-c",
+      "name": "Success? (C)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 700]
+    },
+    {
+      "parameters": {},
+      "id": "success-alert",
+      "name": "Success Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [850, 500]
+    },
+    {
+      "parameters": {},
+      "id": "failure-alert",
+      "name": "Failure Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [850, 800]
+    }
+  ],
+  "connections": {
+    "Judicial Trigger (Sun 2AM)": {
+      "main": [[{"node": "Run JudicialCache Pipeline", "type": "main", "index": 0}]]
+    },
+    "Executive Trigger (Sun 3AM)": {
+      "main": [[{"node": "Run ExecutiveCache Pipeline", "type": "main", "index": 0}]]
+    },
+    "Civic Trigger (Daily 4AM)": {
+      "main": [[{"node": "Run CivicCache Pipeline", "type": "main", "index": 0}]]
+    },
+    "Run JudicialCache Pipeline": {
+      "main": [[{"node": "Success? (J)", "type": "main", "index": 0}]]
+    },
+    "Run ExecutiveCache Pipeline": {
+      "main": [[{"node": "Success? (E)", "type": "main", "index": 0}]]
+    },
+    "Run CivicCache Pipeline": {
+      "main": [[{"node": "Success? (C)", "type": "main", "index": 0}]]
+    },
+    "Success? (J)": {
+      "main": [
+        [{"node": "Success Alert", "type": "main", "index": 0}],
+        [{"node": "Failure Alert", "type": "main", "index": 0}]
+      ]
+    },
+    "Success? (E)": {
+      "main": [
+        [{"node": "Success Alert", "type": "main", "index": 0}],
+        [{"node": "Failure Alert", "type": "main", "index": 0}]
+      ]
+    },
+    "Success? (C)": {
+      "main": [
+        [{"node": "Success Alert", "type": "main", "index": 0}],
+        [{"node": "Failure Alert", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 3,
+  "updatedAt": "2025-12-27T00:00:00.000Z",
+  "versionId": "1"
+}

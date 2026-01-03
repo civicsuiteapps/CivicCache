@@ -1,0 +1,297 @@
+{
+  "name": "Cache Automation - v3 (No FS)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "judicial-trigger",
+      "name": "Judicial Trigger (Sun 2AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "executive-trigger",
+      "name": "Executive Trigger (Sun 3AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "civic-trigger",
+      "name": "Civic Trigger (Daily 4AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 700]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "judicial",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-judicial",
+      "name": "Tag: Judicial",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "executive",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-executive",
+      "name": "Tag: Executive",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 500]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "civic",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-civic",
+      "name": "Tag: Civic",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if enough time has passed since last run using workflow static data\nconst project = $json.project;\n\n// Get last run time from workflow static data\nconst staticData = $workflow.staticData || {};\nconst lastRuns = staticData.lastRuns || {};\nconst lastRun = lastRuns[project];\n\nconst now = new Date();\nconst thresholds = {\n  judicial: 7 * 24 * 60 * 60 * 1000,   // 7 days\n  executive: 7 * 24 * 60 * 60 * 1000,  // 7 days\n  civic: 24 * 60 * 60 * 1000           // 1 day\n};\n\nlet shouldRun = true;\nlet hoursSinceLastRun = null;\n\nif (lastRun) {\n  const lastRunTime = new Date(lastRun);\n  const timeSinceLastRun = now - lastRunTime;\n  hoursSinceLastRun = Math.floor(timeSinceLastRun / (1000 * 60 * 60));\n  shouldRun = timeSinceLastRun > thresholds[project];\n}\n\nreturn [{\n  json: {\n    project: project,\n    should_run: shouldRun,\n    last_run: lastRun || null,\n    hours_since_last_run: hoursSinceLastRun\n  }\n}];"
+      },
+      "id": "check-last-run",
+      "name": "Check Last Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.should_run }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-run",
+      "name": "Should Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 500]
+    },
+    {
+      "parameters": {},
+      "id": "skip-too-recent",
+      "name": "Skip - Too Recent",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1050, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.project }}",
+              "value2": "judicial"
+            }
+          ]
+        }
+      },
+      "id": "route-judicial",
+      "name": "Route: Judicial?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.project }}",
+              "value2": "executive"
+            }
+          ]
+        }
+      },
+      "id": "route-executive",
+      "name": "Route: Executive?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\n\ntry {\n  const output = execSync(\n    'python3 /Users/abrooks/GIT/JudicialCache/judicial_pipeline.py',\n    { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }\n  );\n  \n  return [{\n    json: {\n      project: 'judicial',\n      success: true,\n      output: output,\n      timestamp: new Date().toISOString()\n    }\n  }];\n} catch (error) {\n  throw new Error(`JudicialCache pipeline failed: ${error.message}\\n${error.stdout}\\n${error.stderr}`);\n}"
+      },
+      "id": "run-judicial",
+      "name": "Run JudicialCache Pipeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\n\ntry {\n  const output = execSync(\n    'python3 /Users/abrooks/GIT/ExecutiveCache/executive_pipeline.py',\n    { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }\n  );\n  \n  return [{\n    json: {\n      project: 'executive',\n      success: true,\n      output: output,\n      timestamp: new Date().toISOString()\n    }\n  }];\n} catch (error) {\n  throw new Error(`ExecutiveCache pipeline failed: ${error.message}\\n${error.stdout}\\n${error.stderr}`);\n}"
+      },
+      "id": "run-executive",
+      "name": "Run ExecutiveCache Pipeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\n\ntry {\n  const output = execSync(\n    'python3 /Users/abrooks/GIT/CivicCache/civic_pipeline.py',\n    { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }\n  );\n  \n  return [{\n    json: {\n      project: 'civic',\n      success: true,\n      output: output,\n      timestamp: new Date().toISOString()\n    }\n  }];\n} catch (error) {\n  throw new Error(`CivicCache pipeline failed: ${error.message}\\n${error.stdout}\\n${error.stderr}`);\n}"
+      },
+      "id": "run-civic",
+      "name": "Run CivicCache Pipeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update workflow static data with last successful run time\nconst project = $json.project;\nconst timestamp = $json.timestamp;\n\n// Update static data\nconst staticData = $workflow.staticData || {};\nif (!staticData.lastRuns) {\n  staticData.lastRuns = {};\n}\nstaticData.lastRuns[project] = timestamp;\n\nreturn [{\n  json: {\n    project: project,\n    state_updated: true,\n    timestamp: timestamp,\n    output: $json.output\n  }\n}];"
+      },
+      "id": "update-state",
+      "name": "Update State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 500]
+    },
+    {
+      "parameters": {},
+      "id": "success-alert",
+      "name": "Success Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1850, 500]
+    }
+  ],
+  "connections": {
+    "Judicial Trigger (Sun 2AM)": {
+      "main": [[{"node": "Tag: Judicial", "type": "main", "index": 0}]]
+    },
+    "Executive Trigger (Sun 3AM)": {
+      "main": [[{"node": "Tag: Executive", "type": "main", "index": 0}]]
+    },
+    "Civic Trigger (Daily 4AM)": {
+      "main": [[{"node": "Tag: Civic", "type": "main", "index": 0}]]
+    },
+    "Tag: Judicial": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Tag: Executive": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Tag: Civic": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Check Last Run": {
+      "main": [[{"node": "Should Run?", "type": "main", "index": 0}]]
+    },
+    "Should Run?": {
+      "main": [
+        [{"node": "Route: Judicial?", "type": "main", "index": 0}],
+        [{"node": "Skip - Too Recent", "type": "main", "index": 0}]
+      ]
+    },
+    "Route: Judicial?": {
+      "main": [
+        [{"node": "Run JudicialCache Pipeline", "type": "main", "index": 0}],
+        [{"node": "Route: Executive?", "type": "main", "index": 0}]
+      ]
+    },
+    "Route: Executive?": {
+      "main": [
+        [{"node": "Run ExecutiveCache Pipeline", "type": "main", "index": 0}],
+        [{"node": "Run CivicCache Pipeline", "type": "main", "index": 0}]
+      ]
+    },
+    "Run JudicialCache Pipeline": {
+      "main": [[{"node": "Update State", "type": "main", "index": 0}]]
+    },
+    "Run ExecutiveCache Pipeline": {
+      "main": [[{"node": "Update State", "type": "main", "index": 0}]]
+    },
+    "Run CivicCache Pipeline": {
+      "main": [[{"node": "Update State", "type": "main", "index": 0}]]
+    },
+    "Update State": {
+      "main": [[{"node": "Success Alert", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {
+    "lastRuns": {}
+  },
+  "tags": [],
+  "triggerCount": 3,
+  "updatedAt": "2025-12-27T00:00:00.000Z",
+  "versionId": "1"
+}

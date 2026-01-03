@@ -1,0 +1,402 @@
+{
+  "name": "Cache Automation - Unified v2",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "judicial-trigger",
+      "name": "Judicial Trigger (Sun 2AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 100]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "executive-trigger",
+      "name": "Executive Trigger (Sun 3AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "civic-trigger",
+      "name": "Civic Trigger (Daily 4AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 900]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "judicial",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-judicial",
+      "name": "Tag: Judicial",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "executive",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-executive",
+      "name": "Tag: Executive",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 500]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "project-tag",
+              "name": "project",
+              "value": "civic",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tag-civic",
+      "name": "Tag: Civic",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst project = $json.project;\nconst stateFile = `/data/${project}/pipeline_state.json`;\n\nlet state = { last_successful_run: null };\nif (fs.existsSync(stateFile)) {\n  const stateData = fs.readFileSync(stateFile, 'utf8');\n  state = JSON.parse(stateData);\n}\n\nconst now = new Date();\nconst thresholds = {\n  judicial: 7 * 24 * 60 * 60 * 1000,\n  executive: 7 * 24 * 60 * 60 * 1000,\n  civic: 24 * 60 * 60 * 1000\n};\n\nconst shouldRun = !state.last_successful_run ||\n  (now - new Date(state.last_successful_run)) > thresholds[project];\n\nreturn [{\n  json: {\n    project: project,\n    should_run: shouldRun,\n    last_run: state.last_successful_run,\n    hours_since_last_run: state.last_successful_run\n      ? Math.floor((now - new Date(state.last_successful_run)) / (1000 * 60 * 60))\n      : null\n  }\n}];"
+      },
+      "id": "check-last-run",
+      "name": "Check Last Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.should_run }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-run",
+      "name": "Should Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 500]
+    },
+    {
+      "parameters": {},
+      "id": "skip-too-recent",
+      "name": "Skip - Too Recent",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1050, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.project }}",
+              "value2": "judicial"
+            }
+          ]
+        }
+      },
+      "id": "route-judicial",
+      "name": "Route: Judicial?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.project }}",
+              "value2": "executive"
+            }
+          ]
+        }
+      },
+      "id": "route-executive",
+      "name": "Route: Executive?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 500]
+    },
+    {
+      "parameters": {
+        "command": "cp /Users/abrooks/GIT/JudicialCache/data/judicial_cache.db /Users/abrooks/GIT/JudicialCache/data/judicial_cache_backup_$(date +%Y%m%d_%H%M%S).db"
+      },
+      "id": "j-backup",
+      "name": "J0: Backup",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1450, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/fetch_scotus_sqlite.py --incremental"
+      },
+      "id": "j-opinions",
+      "name": "J1: Opinions",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1650, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/fetch_scotus_justices.py --incremental"
+      },
+      "id": "j-justices",
+      "name": "J2: Justices",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1850, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/import_justice_images.py --new-only"
+      },
+      "id": "j-photos",
+      "name": "J3: Photos",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2050, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/update_appointing_presidents.py --new-only"
+      },
+      "id": "j-presidents",
+      "name": "J4: Presidents",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2250, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/parse_opinion_segments.py --incremental"
+      },
+      "id": "j-segments",
+      "name": "J5: Segments",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2450, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "#!/bin/bash\nDB=/Users/abrooks/GIT/JudicialCache/data/judicial_cache.db\nif [ ! -f \"$DB\" ]; then\n  echo '{\"valid\": false, \"error\": \"Database not found\"}'\n  exit 1\nfi\nOPINIONS=$(sqlite3 \"$DB\" \"SELECT COUNT(*) FROM opinions;\" || echo \"0\")\nJUSTICES=$(sqlite3 \"$DB\" \"SELECT COUNT(*) FROM justices;\" || echo \"0\")\nif [ \"$OPINIONS\" -lt 100000 ] || [ \"$JUSTICES\" -lt 100 ]; then\n  echo '{\"valid\": false, \"error\": \"Too few records\"}'\n  exit 1\nfi\necho '{\"valid\": true, \"opinions\": '\"$OPINIONS\"', \"justices\": '\"$JUSTICES\"'}'"
+      },
+      "id": "j-validate",
+      "name": "J6: Validate",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2650, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "cd /Users/abrooks/GIT/JudicialCache && python3 scripts/package_for_judicialscope.py"
+      },
+      "id": "j-package",
+      "name": "J7: Package",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2850, 100],
+      "credentials": {
+        "ssh": {
+          "id": "1",
+          "name": "Local SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst project = $json.project;\nconst stateFile = `/data/${project}/pipeline_state.json`;\n\nconst state = {\n  last_successful_run: new Date().toISOString(),\n  version: '1.0',\n  workflow_id: $workflow.id,\n  execution_id: $execution.id\n};\n\nfs.writeFileSync(stateFile, JSON.stringify(state, null, 2));\n\nreturn [{\n  json: {\n    project: project,\n    state_updated: true,\n    timestamp: state.last_successful_run\n  }\n}];"
+      },
+      "id": "update-state",
+      "name": "Update State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3050, 500]
+    },
+    {
+      "parameters": {},
+      "id": "success-alert",
+      "name": "Success Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3250, 500]
+    }
+  ],
+  "connections": {
+    "Judicial Trigger (Sun 2AM)": {
+      "main": [[{"node": "Tag: Judicial", "type": "main", "index": 0}]]
+    },
+    "Executive Trigger (Sun 3AM)": {
+      "main": [[{"node": "Tag: Executive", "type": "main", "index": 0}]]
+    },
+    "Civic Trigger (Daily 4AM)": {
+      "main": [[{"node": "Tag: Civic", "type": "main", "index": 0}]]
+    },
+    "Tag: Judicial": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Tag: Executive": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Tag: Civic": {
+      "main": [[{"node": "Check Last Run", "type": "main", "index": 0}]]
+    },
+    "Check Last Run": {
+      "main": [[{"node": "Should Run?", "type": "main", "index": 0}]]
+    },
+    "Should Run?": {
+      "main": [
+        [{"node": "Route: Judicial?", "type": "main", "index": 0}],
+        [{"node": "Skip - Too Recent", "type": "main", "index": 0}]
+      ]
+    },
+    "Route: Judicial?": {
+      "main": [
+        [{"node": "J0: Backup", "type": "main", "index": 0}],
+        [{"node": "Route: Executive?", "type": "main", "index": 0}]
+      ]
+    },
+    "J0: Backup": {
+      "main": [[{"node": "J1: Opinions", "type": "main", "index": 0}]]
+    },
+    "J1: Opinions": {
+      "main": [[{"node": "J2: Justices", "type": "main", "index": 0}]]
+    },
+    "J2: Justices": {
+      "main": [[{"node": "J3: Photos", "type": "main", "index": 0}]]
+    },
+    "J3: Photos": {
+      "main": [[{"node": "J4: Presidents", "type": "main", "index": 0}]]
+    },
+    "J4: Presidents": {
+      "main": [[{"node": "J5: Segments", "type": "main", "index": 0}]]
+    },
+    "J5: Segments": {
+      "main": [[{"node": "J6: Validate", "type": "main", "index": 0}]]
+    },
+    "J6: Validate": {
+      "main": [[{"node": "J7: Package", "type": "main", "index": 0}]]
+    },
+    "J7: Package": {
+      "main": [[{"node": "Update State", "type": "main", "index": 0}]]
+    },
+    "Update State": {
+      "main": [[{"node": "Success Alert", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 3,
+  "updatedAt": "2025-12-27T00:00:00.000Z",
+  "versionId": "1"
+}

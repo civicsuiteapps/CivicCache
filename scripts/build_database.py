@@ -187,6 +187,90 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Roll call votes table
+    conn.execute("""
+        CREATE TABLE roll_call_votes (
+            id TEXT PRIMARY KEY,
+            congress INTEGER NOT NULL,
+            chamber TEXT NOT NULL,
+            session INTEGER NOT NULL,
+            roll_number INTEGER NOT NULL,
+
+            vote_date TEXT NOT NULL,
+            vote_time TEXT,
+            vote_question TEXT,
+            vote_question_text TEXT,
+            vote_type TEXT,
+            vote_result TEXT,
+            vote_result_text TEXT,
+
+            yea_count INTEGER DEFAULT 0,
+            nay_count INTEGER DEFAULT 0,
+            present_count INTEGER DEFAULT 0,
+            not_voting_count INTEGER DEFAULT 0,
+            required_majority TEXT,
+
+            legislation_id TEXT,
+            amendment_number TEXT,
+            source_url TEXT,
+
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(congress, chamber, session, roll_number),
+            FOREIGN KEY (legislation_id) REFERENCES legislation(id)
+        )
+    """)
+
+    # Member votes table
+    conn.execute("""
+        CREATE TABLE member_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            roll_call_id TEXT NOT NULL,
+            bioguide_id TEXT NOT NULL,
+            vote_position TEXT NOT NULL,
+            member_name TEXT,
+            party TEXT,
+            state TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(roll_call_id, bioguide_id),
+            FOREIGN KEY (roll_call_id) REFERENCES roll_call_votes(id),
+            FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
+        )
+    """)
+
+    # Congressional staff table
+    conn.execute("""
+        CREATE TABLE congressional_staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            first_name TEXT,
+            last_name TEXT,
+            full_name TEXT NOT NULL,
+            suffix TEXT,
+            title TEXT NOT NULL,
+            title_normalized TEXT,
+            office_type TEXT NOT NULL,
+            chamber TEXT,
+            member_bioguide_id TEXT,
+            member_name TEXT,
+            office_location TEXT,
+            committee_code TEXT,
+            committee_name TEXT,
+            subcommittee_name TEXT,
+            party_affiliation TEXT,
+            institutional_office TEXT,
+            congress_number INTEGER NOT NULL,
+            source_document TEXT,
+            source_section TEXT,
+            effective_date TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (member_bioguide_id) REFERENCES congress_members(id) ON DELETE CASCADE
+        )
+    """)
+
     # Metadata table
     conn.execute("""
         CREATE TABLE metadata (
@@ -221,6 +305,22 @@ def create_indexes(conn: sqlite3.Connection) -> None:
 
         "CREATE INDEX idx_linkages_candidate ON candidate_committee_linkages(candidate_id)",
         "CREATE INDEX idx_linkages_committee ON candidate_committee_linkages(committee_id)",
+
+        "CREATE INDEX idx_votes_congress ON roll_call_votes(congress)",
+        "CREATE INDEX idx_votes_chamber ON roll_call_votes(chamber)",
+        "CREATE INDEX idx_votes_session ON roll_call_votes(congress, session)",
+        "CREATE INDEX idx_votes_date ON roll_call_votes(vote_date)",
+        "CREATE INDEX idx_votes_legislation ON roll_call_votes(legislation_id)",
+        "CREATE INDEX idx_member_votes_roll ON member_votes(roll_call_id)",
+        "CREATE INDEX idx_member_votes_bioguide ON member_votes(bioguide_id)",
+        "CREATE INDEX idx_member_votes_position ON member_votes(vote_position)",
+
+        "CREATE INDEX idx_staff_member ON congressional_staff(member_bioguide_id)",
+        "CREATE INDEX idx_staff_committee ON congressional_staff(committee_code)",
+        "CREATE INDEX idx_staff_name ON congressional_staff(last_name, first_name)",
+        "CREATE INDEX idx_staff_title ON congressional_staff(title_normalized)",
+        "CREATE INDEX idx_staff_congress ON congressional_staff(congress_number)",
+        "CREATE INDEX idx_staff_current ON congressional_staff(is_current)",
     ]
 
     for idx_sql in indexes:

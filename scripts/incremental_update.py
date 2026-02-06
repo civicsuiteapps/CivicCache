@@ -73,6 +73,23 @@ def get_database_stats():
         cursor.execute("SELECT MAX(updateDate) FROM legislation WHERE updateDate IS NOT NULL")
         stats['latest_bill_date'] = cursor.fetchone()[0]
 
+        # Get roll call vote count
+        try:
+            cursor.execute("SELECT COUNT(*) FROM roll_call_votes")
+            stats['total_roll_calls'] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM member_votes")
+            stats['total_member_votes'] = cursor.fetchone()[0]
+        except sqlite3.OperationalError:
+            stats['total_roll_calls'] = 0
+            stats['total_member_votes'] = 0
+
+        # Get staff count
+        try:
+            cursor.execute("SELECT COUNT(*) FROM congressional_staff")
+            stats['total_staff'] = cursor.fetchone()[0]
+        except sqlite3.OperationalError:
+            stats['total_staff'] = 0
+
         conn.close()
         return stats
     except Exception as e:
@@ -104,6 +121,9 @@ def main():
 
     print_info("Total Members", f"{stats['total_members']:,}")
     print_info("Total Legislation", f"{stats['total_legislation']:,}")
+    print_info("Total Roll Call Votes", f"{stats.get('total_roll_calls', 0):,}")
+    print_info("Total Member Votes", f"{stats.get('total_member_votes', 0):,}")
+    print_info("Total Staff Records", f"{stats.get('total_staff', 0):,}")
     print_info("Latest Bill Update", stats.get('latest_bill_date', 'N/A'))
 
     # Current Congress number (119th = 2025-2026)
@@ -120,6 +140,8 @@ def main():
         ("import_member_images.py", [], "Import member portraits"),
         ("import_member_positions.py", [], "Update member positions/activity"),
         ("import_legislation.py", ["--congress", str(current_congress)], f"Import {current_congress}th Congress bills"),
+        ("import_votes.py", ["--congress", str(current_congress)], f"Import {current_congress}th Congress roll call votes"),
+        ("import_congressional_staff.py", ["--import-house-sod"], "Import House staff (Statement of Disbursements)"),
         ("import_fec_committees.py", [], "Import FEC committee data"),
     ]
 
@@ -168,16 +190,26 @@ def main():
         print("\n  BEFORE:")
         print_info("  Members", f"{stats['total_members']:,}")
         print_info("  Legislation", f"{stats['total_legislation']:,}")
+        print_info("  Roll Call Votes", f"{stats.get('total_roll_calls', 0):,}")
+        print_info("  Member Votes", f"{stats.get('total_member_votes', 0):,}")
+        print_info("  Staff Records", f"{stats.get('total_staff', 0):,}")
 
         print("\n  AFTER:")
         print_info("  Members", f"{final_stats['total_members']:,}")
         print_info("  Legislation", f"{final_stats['total_legislation']:,}")
+        print_info("  Roll Call Votes", f"{final_stats.get('total_roll_calls', 0):,}")
+        print_info("  Member Votes", f"{final_stats.get('total_member_votes', 0):,}")
+        print_info("  Staff Records", f"{final_stats.get('total_staff', 0):,}")
 
         print("\n  CHANGES:")
         member_diff = final_stats['total_members'] - stats['total_members']
         leg_diff = final_stats['total_legislation'] - stats['total_legislation']
+        vote_diff = final_stats.get('total_roll_calls', 0) - stats.get('total_roll_calls', 0)
+        staff_diff = final_stats.get('total_staff', 0) - stats.get('total_staff', 0)
         print_info("  Members added", f"+{member_diff}" if member_diff >= 0 else str(member_diff))
         print_info("  Legislation added", f"+{leg_diff}" if leg_diff >= 0 else str(leg_diff))
+        print_info("  Roll calls added", f"+{vote_diff}" if vote_diff >= 0 else str(vote_diff))
+        print_info("  Staff added", f"+{staff_diff}" if staff_diff >= 0 else str(staff_diff))
 
     print(f"\n🕐 FINISHED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     sys.exit(0)

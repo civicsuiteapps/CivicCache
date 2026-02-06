@@ -63,8 +63,7 @@ from bs4 import BeautifulSoup
 GOVINFO_API_KEY = os.getenv('GOVINFO_API_KEY', 'DEMO_KEY')
 BASE_URL = "https://api.govinfo.gov"
 CDIR_COLLECTION_URL = f"{BASE_URL}/collections/CDIR"
-DB_PATH = Path(__file__).parent.parent / "civic_cache.db"  # Staff records DB
-MEMBER_DB_PATH = Path(__file__).parent.parent / "data" / "civic_cache.db"  # Member lookup DB
+DB_PATH = Path(__file__).parent.parent / "data" / "civic_cache.db"
 DOWNLOAD_DIR = Path(__file__).parent.parent / "data" / "cdir_downloads"
 
 # Ensure download directory exists
@@ -1598,10 +1597,10 @@ class HouseSODImporter:
 
         lookup = {}
 
-        if not MEMBER_DB_PATH.exists():
+        if not DB_PATH.exists():
             return lookup
 
-        conn = sqlite3.connect(MEMBER_DB_PATH)
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -2034,10 +2033,10 @@ class SenatePDFImporter:
 
         lookup = {}
 
-        if not MEMBER_DB_PATH.exists():
+        if not DB_PATH.exists():
             return lookup
 
-        conn = sqlite3.connect(MEMBER_DB_PATH)
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -2085,7 +2084,7 @@ class StaffDatabase:
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS congressional_staff (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
 
                 -- Personal identification
                 first_name TEXT,
@@ -2117,30 +2116,38 @@ class StaffDatabase:
 
                 -- Source tracking
                 congress_number INTEGER NOT NULL,
-                source_package TEXT,
-                source_granule TEXT,
+                source_document TEXT,
+                source_section TEXT,
                 effective_date TEXT,
 
                 -- Metadata
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                is_current INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT,
+                is_current INTEGER NOT NULL DEFAULT 1,
 
-                -- Unique constraint for member staff
-                UNIQUE(member_bioguide_id, title_normalized, full_name, congress_number)
-                    ON CONFLICT REPLACE
+                FOREIGN KEY (member_bioguide_id) REFERENCES congress_members(id) ON DELETE CASCADE
             )
         """)
 
         # Create indexes
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_staff_member
+            ON congressional_staff(member_bioguide_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_staff_committee
+            ON congressional_staff(committee_code)
+        """)
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_staff_name
             ON congressional_staff(last_name, first_name)
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_staff_member
-            ON congressional_staff(member_bioguide_id)
+            CREATE INDEX IF NOT EXISTS idx_staff_title
+            ON congressional_staff(title_normalized)
         """)
 
         cursor.execute("""
@@ -2150,7 +2157,7 @@ class StaffDatabase:
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_staff_current
-            ON congressional_staff(is_current) WHERE is_current = 1
+            ON congressional_staff(is_current)
         """)
 
         conn.commit()
@@ -2177,8 +2184,9 @@ class StaffDatabase:
                         title, title_normalized,
                         office_type, chamber,
                         member_bioguide_id, member_name, office_location,
-                        congress_number, source_package, effective_date
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        congress_number, source_document, effective_date,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     record.get('first_name'),
                     record.get('last_name'),
@@ -2193,7 +2201,9 @@ class StaffDatabase:
                     record.get('office_location'),
                     congress,
                     package_id,
-                    datetime.now().date().isoformat()
+                    datetime.now().date().isoformat(),
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat()
                 ))
                 inserted += 1
 
@@ -2219,11 +2229,11 @@ def load_members_from_db(chamber: Optional[str] = None, limit: Optional[int] = N
     Returns:
         List of member dicts with id, full_name, chamber, website_url
     """
-    if not MEMBER_DB_PATH.exists():
-        print(f"Member database not found at {MEMBER_DB_PATH}")
+    if not DB_PATH.exists():
+        print(f"Member database not found at {DB_PATH}")
         return []
 
-    conn = sqlite3.connect(MEMBER_DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     query = """
@@ -2460,12 +2470,12 @@ def main():
     # Load member database for bioguide ID lookup
     print(f"\n🔍 Loading member database...")
 
-    if not MEMBER_DB_PATH.exists():
-        print(f"\n⚠️  Member database not found at {MEMBER_DB_PATH}")
+    if not DB_PATH.exists():
+        print(f"\n⚠️  Member database not found at {DB_PATH}")
         print("   Continuing without bioguide ID mapping...")
         member_lookup = {}
     else:
-        conn = sqlite3.connect(MEMBER_DB_PATH)
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         # Create lookup dict: last_name -> {id, chamber, full_name}

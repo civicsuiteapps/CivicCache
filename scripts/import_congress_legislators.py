@@ -2,13 +2,16 @@
 """
 Import member data from the unitedstates/congress-legislators repository.
 
-This script downloads the legislators-current.yaml file from GitHub and
-enriches our congress_members table with:
+This script downloads the legislators-current.yaml and legislators-social-media.yaml
+files from GitHub and enriches our congress_members table with:
 - nickname (e.g., "Bernie" for Bernard Sanders)
 - birthday (full date: YYYY-MM-DD)
 - gender (M/F)
 - middle_name
 - External IDs: wikipedia, govtrack, opensecrets, votesmart, fec, ballotpedia, cspan
+- Social media: twitter_handle, facebook_url, youtube_url
+- Contact form URL
+- Term start/end dates (full YYYY-MM-DD format)
 
 Data source: https://github.com/unitedstates/congress-legislators
 This is an official, community-maintained dataset that pulls from bioguide
@@ -44,6 +47,7 @@ except ImportError:
 # Configuration
 LEGISLATORS_CURRENT_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-current.yaml"
 LEGISLATORS_HISTORICAL_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-historical.yaml"
+SOCIAL_MEDIA_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-social-media.yaml"
 
 # External ID columns to add/update
 EXTERNAL_ID_COLUMNS = [
@@ -54,6 +58,20 @@ EXTERNAL_ID_COLUMNS = [
     'fec_id',
     'ballotpedia_id',
     'cspan_id'
+]
+
+# Social media columns to update
+SOCIAL_MEDIA_COLUMNS = [
+    'twitter_handle',
+    'facebook_url',
+    'youtube_url'
+]
+
+# Term/contact columns to update
+TERM_COLUMNS = [
+    'contact_form_url',
+    'term_start_date',
+    'term_end_date'
 ]
 
 # Load .env file
@@ -69,15 +87,31 @@ if env_path.exists():
 DATABASE_PATH = Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db')
 
 
-def download_yaml(url: str) -> List[Dict]:
+def download_yaml(url: str, item_name: str = "legislators") -> List[Dict]:
     """Download and parse YAML file from URL."""
     print(f"Downloading: {url}")
     with urllib.request.urlopen(url, timeout=60) as response:
         content = response.read().decode('utf-8')
     print(f"  Downloaded {len(content):,} bytes")
     data = yaml.safe_load(content)
-    print(f"  Parsed {len(data)} legislators")
+    print(f"  Parsed {len(data)} {item_name}")
     return data
+
+
+def download_social_media() -> Dict[str, Dict]:
+    """Download social media data and return dict keyed by bioguide_id."""
+    data = download_yaml(SOCIAL_MEDIA_URL, "social media entries")
+    result = {}
+    for entry in data:
+        bioguide_id = entry.get('id', {}).get('bioguide')
+        if bioguide_id:
+            social = entry.get('social', {})
+            result[bioguide_id] = {
+                'twitter_handle': social.get('twitter'),
+                'facebook_url': f"https://facebook.com/{social['facebook']}" if social.get('facebook') else None,
+                'youtube_url': f"https://youtube.com/{social['youtube']}" if social.get('youtube') else None,
+            }
+    return result
 
 
 def ensure_columns(conn: sqlite3.Connection) -> List[str]:
@@ -85,7 +119,7 @@ def ensure_columns(conn: sqlite3.Connection) -> List[str]:
     cursor = conn.execute("PRAGMA table_info(congress_members)")
     existing_columns = [row[1] for row in cursor.fetchall()]
 
-    columns_to_add = ['birthday'] + EXTERNAL_ID_COLUMNS
+    columns_to_add = ['birthday'] + EXTERNAL_ID_COLUMNS + SOCIAL_MEDIA_COLUMNS + TERM_COLUMNS
     added = []
 
     for column in columns_to_add:
@@ -125,6 +159,7 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
     ids = legislator.get('id', {})
     name = legislator.get('name', {})
     bio = legislator.get('bio', {})
+    terms = legislator.get('terms', [])
 
     bioguide_id = ids.get('bioguide')
     if not bioguide_id:
@@ -133,6 +168,12 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
     # Get FEC IDs - can be a list, take the most recent one
     fec_ids = ids.get('fec', [])
     fec_id = fec_ids[-1] if fec_ids else None
+
+    # Get current term data (most recent term)
+    current_term = terms[-1] if terms else {}
+    contact_form = current_term.get('contact_form')
+    term_start = current_term.get('start')  # Format: YYYY-MM-DD
+    term_end = current_term.get('end')  # Format: YYYY-MM-DD
 
     return {
         'bioguide_id': bioguide_id,
@@ -150,6 +191,10 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
         'fec_id': fec_id,
         'ballotpedia_id': ids.get('ballotpedia'),
         'cspan_id': str(ids.get('cspan')) if ids.get('cspan') else None,
+        # Term and contact info
+        'contact_form_url': contact_form,
+        'term_start_date': term_start,
+        'term_end_date': term_end,
     }
 
 
@@ -183,6 +228,18 @@ def update_member(conn: sqlite3.Connection, bioguide_id: str, data: Dict, existi
 
     # External IDs - always update if available (overwrite)
     for col in EXTERNAL_ID_COLUMNS:
+        if data.get(col):
+            updates.append(f'{col} = ?')
+            params.append(data[col])
+
+    # Social media - always update if available (overwrite)
+    for col in SOCIAL_MEDIA_COLUMNS:
+        if data.get(col):
+            updates.append(f'{col} = ?')
+            params.append(data[col])
+
+    # Term and contact info - always update if available (overwrite)
+    for col in TERM_COLUMNS:
         if data.get(col):
             updates.append(f'{col} = ?')
             params.append(data[col])
@@ -240,6 +297,10 @@ def main():
         historical = download_yaml(LEGISLATORS_HISTORICAL_URL)
         legislators.extend(historical)
 
+    # Download social media data
+    print()
+    social_media = download_social_media()
+
     # Process legislators
     stats = {
         'matched': 0,
@@ -258,6 +319,10 @@ def main():
             continue
 
         bioguide_id = data['bioguide_id']
+
+        # Merge in social media data if available
+        if bioguide_id in social_media:
+            data.update(social_media[bioguide_id])
 
         if bioguide_id not in existing_members:
             stats['not_found'] += 1
@@ -309,6 +374,8 @@ def main():
     # Group by type
     bio_fields = ['nickname', 'middle_name', 'birthday', 'birth_year', 'gender']
     id_fields = EXTERNAL_ID_COLUMNS
+    social_fields = SOCIAL_MEDIA_COLUMNS
+    term_fields = TERM_COLUMNS
 
     print("  Bio fields:")
     for field in bio_fields:
@@ -317,6 +384,16 @@ def main():
 
     print("  External IDs:")
     for field in id_fields:
+        if field in stats['fields_updated']:
+            print(f"    {field}: {stats['fields_updated'][field]}")
+
+    print("  Social media:")
+    for field in social_fields:
+        if field in stats['fields_updated']:
+            print(f"    {field}: {stats['fields_updated'][field]}")
+
+    print("  Term/contact info:")
+    for field in term_fields:
         if field in stats['fields_updated']:
             print(f"    {field}: {stats['fields_updated'][field]}")
 

@@ -402,9 +402,11 @@ INSERT INTO metadata (key, value) VALUES
 | states | 56 | US states + territories |
 | congressional_districts | 444 | District metadata |
 | candidates | ~50,000+ | All FEC candidates (1979-2026) |
-| committees | ~20,000+ | All active/historical committees |
+| committees | ~20,000+ | All active/historical FEC committees |
 | candidate_committee_linkages | ~100,000+ | Candidate-committee relationships |
 | contributions | ~1,000,000+ | Sampled contribution records |
+| congressional_committees | ~250+ | Congressional committees and subcommittees |
+| member_committee_assignments | ~2,000+ | Member committee assignments |
 
 **Current Database Size**: 164 MB (with legislation summaries, without full legislative actions)
 
@@ -577,6 +579,63 @@ ORDER BY l.introduced_date DESC
 LIMIT 10;
 ```
 
+### Committee assignments
+
+```sql
+-- Get all committee assignments for a member
+SELECT
+    m.full_name,
+    c.name as committee_name,
+    c.chamber,
+    a.title,
+    a.rank,
+    CASE WHEN a.is_subcommittee = 1 THEN 'Subcommittee' ELSE 'Committee' END as type
+FROM member_committee_assignments a
+JOIN congress_members m ON a.member_id = m.id
+JOIN congressional_committees c ON a.committee_id = c.id
+WHERE m.id = 'P000197'  -- Example: Nancy Pelosi
+ORDER BY a.is_subcommittee, c.name;
+
+-- Get all members of a specific committee
+SELECT
+    m.full_name,
+    m.current_party,
+    m.state_code,
+    a.title,
+    a.rank
+FROM member_committee_assignments a
+JOIN congress_members m ON a.member_id = m.id
+WHERE a.committee_id = 'HSJU'  -- House Judiciary
+  AND a.is_subcommittee = 0
+ORDER BY a.rank;
+
+-- Get committee chairs and ranking members
+SELECT
+    c.name as committee_name,
+    c.chamber,
+    m.full_name,
+    m.current_party,
+    a.title
+FROM member_committee_assignments a
+JOIN congressional_committees c ON a.committee_id = c.id
+JOIN congress_members m ON a.member_id = m.id
+WHERE a.title IN ('Chair', 'Chairman', 'Chairwoman', 'Ranking Member')
+  AND c.is_subcommittee = 0
+ORDER BY c.chamber, c.name;
+
+-- Count committees per member
+SELECT
+    m.full_name,
+    m.current_party,
+    COUNT(DISTINCT CASE WHEN a.is_subcommittee = 0 THEN a.committee_id END) as committee_count,
+    COUNT(DISTINCT CASE WHEN a.is_subcommittee = 1 THEN a.committee_id END) as subcommittee_count
+FROM congress_members m
+JOIN member_committee_assignments a ON m.id = a.member_id
+GROUP BY m.id
+ORDER BY committee_count DESC
+LIMIT 20;
+```
+
 ## Performance Considerations
 
 1. **Indexes**: All foreign keys and frequently queried columns are indexed
@@ -604,13 +663,56 @@ class CongressMember {
 }
 ```
 
+### 12. congressional_committees
+
+Congressional committee definitions (standing, select, joint, and subcommittees).
+
+```sql
+CREATE TABLE congressional_committees (
+    id TEXT PRIMARY KEY,              -- Committee ID (e.g., "HSAG" for House Agriculture)
+    name TEXT NOT NULL,               -- Full committee name
+    chamber TEXT NOT NULL,            -- 'House', 'Senate', or 'Joint'
+    committee_type TEXT,              -- 'house', 'senate', 'joint', 'subcommittee'
+    parent_committee_id TEXT,         -- For subcommittees, references parent committee
+    jurisdiction TEXT,                -- Committee jurisdiction description
+    url TEXT,                         -- Official committee website
+    is_subcommittee INTEGER DEFAULT 0,-- 1 if subcommittee, 0 if main committee
+    congress INTEGER DEFAULT 119,     -- Congress number
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_committees_chamber ON congressional_committees(chamber);
+CREATE INDEX idx_committees_parent ON congressional_committees(parent_committee_id);
+```
+
+### 13. member_committee_assignments
+
+Tracks which members serve on which committees.
+
+```sql
+CREATE TABLE member_committee_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id TEXT NOT NULL,          -- Bioguide ID of the member
+    committee_id TEXT NOT NULL,       -- Committee ID
+    party_side TEXT,                  -- 'majority' or 'minority'
+    rank INTEGER,                     -- Rank/seniority on the committee
+    title TEXT,                       -- Role (e.g., "Chair", "Ranking Member")
+    is_subcommittee INTEGER DEFAULT 0,-- 1 if subcommittee assignment
+    congress INTEGER DEFAULT 119,     -- Congress number
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES congress_members(id),
+    UNIQUE(member_id, committee_id, congress)
+);
+
+CREATE INDEX idx_assignments_member ON member_committee_assignments(member_id);
+CREATE INDEX idx_assignments_committee ON member_committee_assignments(committee_id);
+```
+
 ## Future Enhancements
 
-1. **Voting Records**: Add tables for roll call votes and bill sponsorships
-2. **Legislation**: Track bills and their sponsors
-3. **Committee Assignments**: Congressional committee memberships
-4. **Historical Data**: Archive previous Congress sessions
-5. **Real-time Updates**: Incremental sync from Congress.gov and OpenFEC APIs
+1. **Voting Records**: Add tables for roll call votes
+2. **Historical Data**: Archive previous Congress sessions
+3. **Real-time Updates**: Incremental sync from Congress.gov and OpenFEC APIs
 
 ## Data Sources
 

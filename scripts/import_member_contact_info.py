@@ -18,27 +18,33 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-# Load environment variables from .env file
-env_path = Path(__file__).parent.parent / '.env'
-if env_path.exists():
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                os.environ[key] = value
+try:
+    from config import CONGRESS_NUMBER as _CFG_CONGRESS, DB_PATH as _CFG_DB, CONGRESS_API_KEY as _CFG_KEY
+except ImportError:
+    _CFG_CONGRESS = 119
+    _CFG_DB = Path("data/civic_cache.db")
+    _CFG_KEY = ""
+    # Fallback .env loading
+    env_path = Path(__file__).parent.parent / '.env'
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key, value)
 
 # Database location
-DB_PATH = Path("data/civic_cache.db")
+DB_PATH = _CFG_DB
 
 # API configuration
 CONGRESS_API_BASE = "https://api.congress.gov/v3"
 
 # Get API key from environment
-CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY", "")
+CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CONGRESS_API_KEY") or _CFG_KEY
 
 # Current Congress session
-CONGRESS_NUMBER = 119
+CONGRESS_NUMBER = _CFG_CONGRESS
 
 # Rate limiting
 REQUEST_DELAY = 1.0  # Delay between API requests (seconds)

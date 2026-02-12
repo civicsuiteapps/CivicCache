@@ -27,24 +27,20 @@ except ImportError:
     print("ERROR: PyYAML not installed. Run: pip3 install pyyaml")
     exit(1)
 
+try:
+    from config import CONGRESS_NUMBER as _CFG_CONGRESS, DB_PATH as _CFG_DB
+except ImportError:
+    _CFG_CONGRESS = 119
+    _CFG_DB = Path(__file__).parent.parent / "data" / "civic_cache.db"
+
 # Configuration
 COMMITTEES_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/committees-current.yaml"
 MEMBERSHIP_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/committee-membership-current.yaml"
 
 # Current congress number
-CURRENT_CONGRESS = 119
+CURRENT_CONGRESS = _CFG_CONGRESS
 
-# Load .env file
-env_path = Path(__file__).parent.parent / '.env'
-if env_path.exists():
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                os.environ[key] = value
-
-DATABASE_PATH = Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db')
+DATABASE_PATH = _CFG_DB
 
 
 def download_yaml(url: str, item_name: str = "entries") -> any:

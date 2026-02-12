@@ -10,16 +10,30 @@ This script:
 """
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-# Database location
-DB_PATH = Path("data/civic_cache.db")
+try:
+    from config import DB_PATH as _CFG_DB
+except ImportError:
+    _CFG_DB = Path("data/civic_cache.db")
 
-# Source data file
-DISTRICT_JSON_PATH = Path("/Users/abrooks/GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/DistrictData.json")
+# Database location
+DB_PATH = _CFG_DB
+
+# Source data file -- prefer env var, fall back to well-known local paths
+_civicscope_data = os.environ.get("CIVICSCOPE_DATA_PATH", "")
+if _civicscope_data:
+    DISTRICT_JSON_PATH = Path(_civicscope_data).expanduser() / "DistrictData.json"
+else:
+    _candidates = [
+        Path(__file__).parent.parent / "data" / "DistrictData.json",
+        Path.home() / "GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/DistrictData.json",
+    ]
+    DISTRICT_JSON_PATH = next((p for p in _candidates if p.exists()), _candidates[0])
 
 # FIPS to state code mapping
 FIPS_TO_STATE = {

@@ -14,23 +14,28 @@ import time
 import os
 from pathlib import Path
 
-# Load environment variables from .env file
-env_path = Path(__file__).parent.parent / '.env'
-if env_path.exists():
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                os.environ[key] = value
+try:
+    from config import DB_PATH as _CFG_DB, CONGRESS_API_KEY as _CFG_KEY
+except ImportError:
+    _CFG_DB = Path(__file__).parent.parent / "data/civic_cache.db"
+    _CFG_KEY = ""
+    # Fallback .env loading
+    env_path = Path(__file__).parent.parent / '.env'
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key, value)
 
 # Database locations
-CIVICCACHE_DB = Path(__file__).parent.parent / "data/civic_cache.db"
+CIVICCACHE_DB = _CFG_DB
 CIVICSCOPE_DB = Path.home() / "GIT/CivicScope/CivicScope/Resources/civic_cache.db"
 
 # API configuration
 CONGRESS_API_BASE = "https://api.congress.gov/v3"
-CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY", "")
+CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CONGRESS_API_KEY") or _CFG_KEY
 
 # Rate limiting - Congress.gov allows 5000 req/hour
 REQUEST_DELAY = 0.75  # ~4800 requests/hour max

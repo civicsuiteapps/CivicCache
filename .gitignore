@@ -31,4 +31,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# FEC bulk data (20GB+)
+FEC-Bulk-Data/
 FEC-Bulk-Data.zip

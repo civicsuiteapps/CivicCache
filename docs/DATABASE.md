@@ -407,6 +407,8 @@ INSERT INTO metadata (key, value) VALUES
 | contributions | ~1,000,000+ | Sampled contribution records |
 | congressional_committees | ~250+ | Congressional committees and subcommittees |
 | member_committee_assignments | ~2,000+ | Member committee assignments |
+| member_fec_summary | ~1,074 | FEC financial summary per member per cycle |
+| member_top_contributors | ~10,740 | Top 10 contributors per member per cycle |
 
 **Current Database Size**: 164 MB (with legislation summaries, without full legislative actions)
 
@@ -706,6 +708,59 @@ CREATE TABLE member_committee_assignments (
 
 CREATE INDEX idx_assignments_member ON member_committee_assignments(member_id);
 CREATE INDEX idx_assignments_committee ON member_committee_assignments(committee_id);
+```
+
+### 14. member_fec_summary
+
+FEC financial summary data per member per election cycle. Pre-computed from All-Candidates files with denormalized top contributor for card display.
+
+```sql
+CREATE TABLE member_fec_summary (
+    bioguide_id TEXT NOT NULL,
+    election_cycle INTEGER NOT NULL,
+    fec_candidate_id TEXT NOT NULL,
+    total_receipts REAL DEFAULT 0,
+    total_disbursements REAL DEFAULT 0,
+    cash_on_hand REAL DEFAULT 0,
+    debts_owed REAL DEFAULT 0,
+    total_individual_contributions REAL DEFAULT 0,
+    total_pac_contributions REAL DEFAULT 0,
+    total_party_contributions REAL DEFAULT 0,
+    candidate_self_funding REAL DEFAULT 0,
+    pct_individual REAL DEFAULT 0,
+    pct_pac REAL DEFAULT 0,
+    pct_self_funded REAL DEFAULT 0,
+    top_contributor_name TEXT,
+    top_contributor_type TEXT,       -- 'employer', 'pac', 'party'
+    top_contributor_amount REAL DEFAULT 0,
+    coverage_end_date TEXT,
+    import_date TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (bioguide_id, election_cycle),
+    FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
+);
+
+CREATE INDEX idx_fec_summary_cycle ON member_fec_summary(election_cycle);
+```
+
+### 15. member_top_contributors
+
+Top 10 contributors per member per cycle (PACs and employer-aggregated individuals ranked together).
+
+```sql
+CREATE TABLE member_top_contributors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bioguide_id TEXT NOT NULL,
+    election_cycle INTEGER NOT NULL,
+    rank INTEGER NOT NULL,
+    contributor_name TEXT NOT NULL,
+    contributor_type TEXT NOT NULL,  -- 'employer', 'pac', 'party', 'self'
+    total_amount REAL NOT NULL,
+    transaction_count INTEGER DEFAULT 0,
+    UNIQUE(bioguide_id, election_cycle, rank),
+    FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
+);
+
+CREATE INDEX idx_top_contrib_member ON member_top_contributors(bioguide_id, election_cycle);
 ```
 
 ## Future Enhancements

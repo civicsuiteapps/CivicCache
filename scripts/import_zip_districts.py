@@ -17,8 +17,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 from collections import defaultdict
 
+try:
+    from config import DB_PATH as _CFG_DB
+except ImportError:
+    _CFG_DB = Path("data/civic_cache.db")
+
 # Database location
-DB_PATH = Path("data/civic_cache.db")
+DB_PATH = _CFG_DB
 
 # Source CSV file
 CSV_PATH = Path("data/raw/zip_to_district/zccd.csv")

@@ -28,17 +28,21 @@ import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# Load .env file
-env_path = Path(__file__).parent.parent / '.env'
-if env_path.exists():
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                os.environ[key] = value
+try:
+    from config import DB_PATH as _CFG_DB
+except ImportError:
+    _CFG_DB = None
+    # Fallback .env loading
+    env_path = Path(__file__).parent.parent / '.env'
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key, value)
 
-DATABASE_PATH = Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db')
+DATABASE_PATH = _CFG_DB or (Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db'))
 
 # Request timeout in seconds
 REQUEST_TIMEOUT = 10

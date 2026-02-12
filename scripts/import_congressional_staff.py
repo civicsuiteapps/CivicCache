@@ -59,12 +59,19 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    from config import DB_PATH as _CFG_DB, GOVINFO_API_KEY as _CFG_GOVINFO, CONGRESS_NUMBER as _CFG_CONGRESS
+except ImportError:
+    _CFG_DB = Path(__file__).parent.parent / "data" / "civic_cache.db"
+    _CFG_GOVINFO = ""
+    _CFG_CONGRESS = 119
+
 # Configuration
-GOVINFO_API_KEY = os.getenv('GOVINFO_API_KEY', 'DEMO_KEY')
+GOVINFO_API_KEY = os.getenv('GOVINFO_API_KEY') or _CFG_GOVINFO or 'DEMO_KEY'
 BASE_URL = "https://api.govinfo.gov"
 CDIR_COLLECTION_URL = f"{BASE_URL}/collections/CDIR"
-DB_PATH = Path(__file__).parent.parent / "data" / "civic_cache.db"
-DOWNLOAD_DIR = Path(__file__).parent.parent / "data" / "cdir_downloads"
+DB_PATH = _CFG_DB
+DOWNLOAD_DIR = DB_PATH.parent / "cdir_downloads"
 
 # Ensure download directory exists
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)

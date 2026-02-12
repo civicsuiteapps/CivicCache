@@ -9,17 +9,33 @@ This script:
 """
 
 import json
+import os
 import sqlite3
 import urllib.request
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-# Database location
-DB_PATH = Path("data/civic_cache.db")
+try:
+    from config import DB_PATH as _CFG_DB, CONGRESS_NUMBER as _CFG_CONGRESS
+except ImportError:
+    _CFG_DB = Path("data/civic_cache.db")
+    _CFG_CONGRESS = 119
 
-# Source data file
-MEMBERS_JSON = Path("/Users/abrooks/GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/119th-congress-members.json")
+# Database location
+DB_PATH = _CFG_DB
+
+# Source data file -- prefer env var, fall back to well-known local paths
+_civicscope_data = os.environ.get("CIVICSCOPE_DATA_PATH", "")
+if _civicscope_data:
+    MEMBERS_JSON = Path(_civicscope_data).expanduser() / f"{_CFG_CONGRESS}th-congress-members.json"
+else:
+    # Try common local paths
+    _candidates = [
+        Path(__file__).parent.parent / "data" / f"{_CFG_CONGRESS}th-congress-members.json",
+        Path.home() / f"GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/{_CFG_CONGRESS}th-congress-members.json",
+    ]
+    MEMBERS_JSON = next((p for p in _candidates if p.exists()), _candidates[0])
 
 
 def create_connection() -> sqlite3.Connection:

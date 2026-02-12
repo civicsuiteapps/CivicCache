@@ -10,8 +10,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).parent
-DB_PATH = SCRIPT_DIR.parent / "data" / "civic_cache.db"
+try:
+    from config import DB_PATH as _CFG_DB, CONGRESS_NUMBER as _CFG_CONGRESS, SCRIPTS_DIR
+except ImportError:
+    _CFG_DB = Path(__file__).parent.parent / "data" / "civic_cache.db"
+    _CFG_CONGRESS = 119
+    SCRIPTS_DIR = Path(__file__).parent
+
+SCRIPT_DIR = SCRIPTS_DIR
+DB_PATH = _CFG_DB
 
 def print_banner(title):
     """Print a formatted banner"""
@@ -126,8 +133,8 @@ def main():
     print_info("Total Staff Records", f"{stats.get('total_staff', 0):,}")
     print_info("Latest Bill Update", stats.get('latest_bill_date', 'N/A'))
 
-    # Current Congress number (119th = 2025-2026)
-    current_congress = 119
+    # Current Congress number
+    current_congress = _CFG_CONGRESS
 
     print_banner("INCREMENTAL UPDATE PLAN")
     print_info("Target Congress", f"{current_congress}th (2025-2026)")

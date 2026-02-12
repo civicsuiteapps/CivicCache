@@ -9,6 +9,7 @@ This script:
 4. Stores everything in the database for offline access
 """
 
+import argparse
 import json
 import sqlite3
 import urllib.request
@@ -19,15 +20,22 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
+try:
+    from config import CONGRESS_NUMBER as _CFG_CONGRESS, DB_PATH as _CFG_DB, CONGRESS_API_KEY as _CFG_KEY
+except ImportError:
+    _CFG_CONGRESS = 119
+    _CFG_DB = Path("data/civic_cache.db")
+    _CFG_KEY = ""
+
 # Database location
-DB_PATH = Path("data/civic_cache.db")
+DB_PATH = _CFG_DB
 
 # API configuration
 CONGRESS_API_BASE = "https://api.congress.gov/v3"
-CONGRESS_NUMBER = 119
+CONGRESS_NUMBER = _CFG_CONGRESS
 
 # Get API key from environment or use DEMO_KEY
-API_KEY = os.environ.get("CONGRESS_API_KEY", "DEMO_KEY")
+API_KEY = os.environ.get("CONGRESS_API_KEY") or os.environ.get("CONGRESS_GOV_API_KEY") or _CFG_KEY or "DEMO_KEY"
 
 # Rate limiting
 REQUEST_DELAY = 0.5  # Delay between API requests (seconds)
@@ -180,8 +188,8 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
             policy_area, is_law, law_number, law_type,
             actions_count, amendments_count, cosponsors_count,
             subjects_count, summaries_count,
-            legislation_url
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            legislation_url, api_update_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         bill_id,
         congress,
@@ -202,7 +210,8 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
         0,  # Will update after fetching cosponsors
         bill_details.get('subjects', {}).get('count', 0),
         bill_details.get('summaries', {}).get('count', 0),
-        bill_details.get('legislationUrl')
+        bill_details.get('legislationUrl'),
+        bill_details.get('updateDate') or bill_details.get('updateDateIncludingText'),
     ))
 
     # Fetch and import summaries
@@ -329,14 +338,90 @@ def import_bill(conn: sqlite3.Connection, bill_summary: Dict) -> str:
     return bill_id
 
 
-def import_all_legislation(conn: sqlite3.Connection) -> Dict[str, int]:
+def _ensure_update_date_column(conn: sqlite3.Connection) -> None:
+    """Add the api_update_date column if it doesn't exist yet."""
+    try:
+        conn.execute("SELECT api_update_date FROM legislation LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE legislation ADD COLUMN api_update_date TEXT")
+        conn.commit()
+
+
+def get_latest_update_date(conn: sqlite3.Connection) -> Optional[str]:
+    """Return the most recent api_update_date from the legislation table."""
+    _ensure_update_date_column(conn)
+    try:
+        row = conn.execute(
+            "SELECT MAX(api_update_date) FROM legislation WHERE api_update_date IS NOT NULL"
+        ).fetchone()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    # Fall back to latest_action_date if api_update_date is all NULL
+    try:
+        row = conn.execute(
+            "SELECT MAX(latest_action_date) FROM legislation WHERE latest_action_date IS NOT NULL"
+        ).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+def fetch_updated_bills(since: str) -> List[Dict]:
+    """Fetch bills updated since *since* (ISO datetime string)."""
+    print(f"\nFetching bills updated since {since}...")
+
+    all_bills = []
+    offset = 0
+    limit = 250
+
+    while True:
+        url = (
+            f"{CONGRESS_API_BASE}/bill/{CONGRESS_NUMBER}"
+            f"?offset={offset}&limit={limit}"
+            f"&fromDateTime={since}T00:00:00Z"
+            f"&sort=updateDate+desc"
+            f"&api_key={API_KEY}&format=json"
+        )
+        data = api_request(url)
+
+        if not data or "bills" not in data:
+            break
+
+        bills = data["bills"]
+        all_bills.extend(bills)
+
+        total = data.get("pagination", {}).get("count", 0)
+        print(f"  Fetched {len(all_bills)}/{total} updated bills...")
+
+        if len(bills) < limit:
+            break
+
+        offset += limit
+
+    print(f"Found {len(all_bills)} updated bills")
+    return all_bills
+
+
+def import_all_legislation(conn: sqlite3.Connection, incremental: bool = False) -> Dict[str, int]:
     """Import all legislation from the 119th Congress."""
     print("\n" + "="*60)
     print("IMPORTING LEGISLATION")
     print("="*60)
 
-    # Fetch list of all bills
-    bills = fetch_all_bills()
+    _ensure_update_date_column(conn)
+
+    # Fetch list of bills (incremental or full)
+    if incremental:
+        since = get_latest_update_date(conn)
+        if since:
+            bills = fetch_updated_bills(since)
+        else:
+            print("  No existing updateDate found -- falling back to full fetch")
+            bills = fetch_all_bills()
+    else:
+        bills = fetch_all_bills()
 
     stats = {
         'total_bills': len(bills),
@@ -518,17 +603,35 @@ def verify_import(conn: sqlite3.Connection) -> None:
 
 def main():
     """Main execution function."""
+    global CONGRESS_NUMBER
+
+    parser = argparse.ArgumentParser(description="Import legislation from Congress.gov")
+    parser.add_argument("--congress", type=int, default=CONGRESS_NUMBER,
+                        help=f"Congress number (default: {CONGRESS_NUMBER})")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Only fetch bills updated since the last import")
+    parser.add_argument("--since", type=str, default=None,
+                        help="Fetch bills updated since this date (YYYY-MM-DD)")
+    parser.add_argument("--all", action="store_true",
+                        help="Fetch all bills (full import)")
+    args = parser.parse_args()
+
+    CONGRESS_NUMBER = args.congress
+    incremental = args.incremental and not args.all
+
     print("="*60)
-    print("LEGISLATION IMPORT - 119TH CONGRESS")
+    print(f"LEGISLATION IMPORT - {CONGRESS_NUMBER}TH CONGRESS")
     print("="*60)
     print(f"API Key: {API_KEY[:10]}..." if API_KEY != "DEMO_KEY" else "API Key: DEMO_KEY (limited)")
+    if incremental:
+        print("Mode: INCREMENTAL (only updated bills)")
 
     try:
         # Connect to database
         conn = create_connection()
 
-        # Import all legislation
-        stats = import_all_legislation(conn)
+        # Import legislation
+        stats = import_all_legislation(conn, incremental=incremental)
 
         # Create indexes
         create_indexes(conn)
@@ -542,7 +645,7 @@ def main():
         conn.close()
 
         print("\n" + "="*60)
-        print("✓ IMPORT COMPLETE")
+        print("IMPORT COMPLETE")
         print("="*60)
         print(f"Imported: {stats['imported']:,} bills")
         print(f"Failed: {stats['failed']:,}")
@@ -554,7 +657,7 @@ def main():
         return 0
 
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n Error: {e}")
         import traceback
         traceback.print_exc()
         return 1

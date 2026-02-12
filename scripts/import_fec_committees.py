@@ -20,8 +20,13 @@ from typing import Dict, List, Any, Optional
 import tempfile
 import os
 
+try:
+    from config import DB_PATH as _CFG_DB
+except ImportError:
+    _CFG_DB = Path("data/civic_cache.db")
+
 # Database location
-DB_PATH = Path("data/civic_cache.db")
+DB_PATH = _CFG_DB
 
 # Data directories
 COMMITTEE_DIR = Path("data/raw/fec/Committee-Master")

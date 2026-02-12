@@ -27,16 +27,22 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
+try:
+    from config import CONGRESS_NUMBER as _CFG_CONGRESS, DB_PATH as _CFG_DB, CONGRESS_API_KEY as _CFG_KEY
+except ImportError:
+    _CFG_CONGRESS = 119
+    _CFG_DB = Path("data/civic_cache.db")
+    _CFG_KEY = ""
+
 # Database location
-DB_PATH = Path("data/civic_cache.db")
+DB_PATH = _CFG_DB
 
 # API configuration
 CONGRESS_API_BASE = "https://api.congress.gov/v3"
-CONGRESS_NUMBER = 119
+CONGRESS_NUMBER = _CFG_CONGRESS
 
 # Get API key from environment or use DEMO_KEY
-# Try both possible env var names
-API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CONGRESS_API_KEY", "DEMO_KEY")
+API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CONGRESS_API_KEY") or _CFG_KEY or "DEMO_KEY"
 
 # Rate limiting
 REQUEST_DELAY = 0.5  # Delay between API requests (seconds)

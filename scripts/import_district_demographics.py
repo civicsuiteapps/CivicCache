@@ -18,22 +18,21 @@ import sqlite3
 import requests
 from pathlib import Path
 from typing import Dict, List, Optional
-from dotenv import load_dotenv
 
-# Load environment variables
 try:
-    load_dotenv()
-except AssertionError:
-    # Fallback for when running in certain contexts
-    from dotenv import dotenv_values
-    env_values = dotenv_values('.env')
-    for key, value in env_values.items():
-        if key not in os.environ:
-            os.environ[key] = value
+    from config import DB_PATH as _CFG_DB, CENSUS_API_KEY as _CFG_CENSUS
+except ImportError:
+    _CFG_DB = Path("data/civic_cache.db")
+    _CFG_CENSUS = ""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
 
 # Configuration
-DB_PATH = Path("data/civic_cache.db")
-CENSUS_API_KEY = os.getenv('CENSUS_API_KEY')
+DB_PATH = _CFG_DB
+CENSUS_API_KEY = os.getenv('CENSUS_API_KEY') or _CFG_CENSUS
 CENSUS_API_BASE = "https://api.census.gov/data/2022/acs/acs5"
 
 # Census variables to fetch

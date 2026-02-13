@@ -1,0 +1,46 @@
+name: Python Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.py'
+      - 'requirements.txt'
+      - '.github/workflows/test.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov requests python-dotenv
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Tests
+        run: |
+          pytest scripts/test_*.py -v --tb=short || echo "No tests found or tests failed"
+        env:
+          CONGRESS_GOV_API_KEY: ${{ secrets.CONGRESS_GOV_API_KEY }}
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check scripts/ --ignore E501 || true

@@ -130,42 +130,74 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
-    # Candidates table
+    # Candidates table (composite PK: candidate_id + election_cycle)
+    # Populated by scripts/import_fec_candidates.py (not build_database.py)
     conn.execute("""
         CREATE TABLE candidates (
-            candidate_id TEXT PRIMARY KEY,
+            candidate_id TEXT NOT NULL,
+            election_cycle INTEGER NOT NULL,
             candidate_name TEXT NOT NULL,
-
             office TEXT,
             office_state TEXT,
             office_district TEXT,
-
             party_code TEXT,
-            party_full_name TEXT,
             incumbent_challenger_status TEXT,
             candidate_status TEXT,
-
-            election_year INTEGER NOT NULL,
-            election_cycle INTEGER NOT NULL,
-
+            election_year INTEGER,
             total_receipts REAL,
             total_disbursements REAL,
             cash_on_hand REAL,
-            total_contributions REAL,
+            total_individual_contributions REAL,
             candidate_contributions REAL,
-
+            candidate_loans REAL,
+            pac_contributions REAL,
+            party_contributions REAL,
+            debts_owed REAL,
+            coverage_end_date TEXT,
             principal_committee_id TEXT,
-
-            mailing_address_1 TEXT,
-            mailing_address_2 TEXT,
             mailing_city TEXT,
             mailing_state TEXT,
             mailing_zip TEXT,
-
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (candidate_id, election_cycle)
+        )
+    """)
 
-            FOREIGN KEY (principal_committee_id) REFERENCES committees(committee_id)
+    # Election races (grouped candidates by cycle/office/state/district)
+    conn.execute("""
+        CREATE TABLE election_races (
+            race_id TEXT PRIMARY KEY,
+            election_cycle INTEGER NOT NULL,
+            office TEXT NOT NULL,
+            state TEXT NOT NULL,
+            district TEXT,
+            incumbent_bioguide_id TEXT,
+            incumbent_fec_id TEXT,
+            incumbent_party TEXT,
+            total_candidates INTEGER DEFAULT 0,
+            challenger_count INTEGER DEFAULT 0,
+            open_seat INTEGER DEFAULT 0,
+            rating TEXT,
+            rating_source TEXT,
+            rating_date TEXT,
+            FOREIGN KEY (incumbent_bioguide_id) REFERENCES congress_members(id)
+        )
+    """)
+
+    # Race candidates (denormalized join for fast app queries)
+    conn.execute("""
+        CREATE TABLE race_candidates (
+            race_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            election_cycle INTEGER NOT NULL,
+            candidate_name TEXT,
+            party_code TEXT,
+            incumbent_challenger_status TEXT,
+            total_receipts REAL,
+            cash_on_hand REAL,
+            total_individual_contributions REAL,
+            PRIMARY KEY (race_id, candidate_id),
+            FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )
     """)
 
@@ -180,7 +212,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
-            FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id),
             FOREIGN KEY (committee_id) REFERENCES committees(committee_id),
 
             UNIQUE(candidate_id, committee_id, election_year)
@@ -294,10 +325,14 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX idx_members_district ON congress_members(state_code, district)",
 
         "CREATE INDEX idx_candidates_office ON candidates(office)",
-        "CREATE INDEX idx_candidates_year ON candidates(election_year)",
         "CREATE INDEX idx_candidates_state ON candidates(office_state)",
         "CREATE INDEX idx_candidates_party ON candidates(party_code)",
         "CREATE INDEX idx_candidates_cycle ON candidates(election_cycle)",
+        "CREATE INDEX idx_candidates_cycle_office ON candidates(election_cycle, office, office_state)",
+
+        "CREATE INDEX idx_races_cycle ON election_races(election_cycle)",
+        "CREATE INDEX idx_races_incumbent ON election_races(incumbent_bioguide_id)",
+        "CREATE INDEX idx_race_cand_race ON race_candidates(race_id)",
 
         "CREATE INDEX idx_committees_type ON committees(committee_type)",
         "CREATE INDEX idx_committees_party ON committees(party_code)",
@@ -355,16 +390,17 @@ def create_fts_tables(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE VIRTUAL TABLE candidates_fts USING fts5(
             candidate_id UNINDEXED,
+            election_cycle UNINDEXED,
             candidate_name,
             office_state,
-            party_full_name
+            party_code
         )
     """)
 
     # Populate FTS from candidates
     conn.execute("""
-        INSERT INTO candidates_fts(candidate_id, candidate_name, office_state, party_full_name)
-        SELECT candidate_id, candidate_name, office_state, party_full_name
+        INSERT INTO candidates_fts(candidate_id, election_cycle, candidate_name, office_state, party_code)
+        SELECT candidate_id, election_cycle, candidate_name, office_state, party_code
         FROM candidates
     """)
 
@@ -492,70 +528,13 @@ def import_congress_members(conn: sqlite3.Connection) -> int:
 
 
 def import_fec_candidates(conn: sqlite3.Connection, limit: Optional[int] = None) -> int:
-    """Import FEC candidate data (sampled for mobile).
+    """Stub -- FEC candidate import is now handled by scripts/import_fec_candidates.py.
 
-    Args:
-        limit: Maximum number of candidates to import per file (None = all)
+    The standalone script has correct field mappings for both Candidate-Master
+    and All-Candidates files, and also builds election_races and race_candidates.
     """
-    print("\nImporting FEC candidates...")
-
-    candidates_dir = FEC_DATA_DIR / "All-Candidates"
-    if not candidates_dir.exists():
-        print("  ✗ All-Candidates directory not found")
-        return 0
-
-    total_count = 0
-
-    # Process text files (pipe-delimited)
-    for file_path in sorted(candidates_dir.glob("*.txt")):
-        count = 0
-        print(f"  Processing {file_path.name}...")
-
-        with open(file_path, 'r', encoding='latin-1') as f:
-            for line in f:
-                if limit and count >= limit:
-                    break
-
-                fields = line.strip().split('|')
-                if len(fields) < 15:
-                    continue
-
-                try:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO candidates (
-                            candidate_id, candidate_name,
-                            office, office_state, office_district,
-                            party_code, incumbent_challenger_status,
-                            candidate_status, election_year, election_cycle,
-                            total_receipts, total_disbursements, cash_on_hand
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        fields[0],  # candidate_id
-                        fields[1],  # candidate_name
-                        fields[2],  # office
-                        fields[3],  # office_state
-                        fields[4],  # office_district
-                        fields[5],  # party_code
-                        fields[6],  # incumbent_challenger_status
-                        fields[7],  # candidate_status
-                        int(fields[8]) if fields[8] else None,  # election_year
-                        int(fields[9]) if fields[9] else None,  # election_cycle
-                        float(fields[14]) if fields[14] else None,  # total_receipts
-                        float(fields[15]) if fields[15] else None,  # total_disbursements
-                        float(fields[16]) if fields[16] else None,  # cash_on_hand
-                    ))
-                    count += 1
-                except (ValueError, IndexError, sqlite3.Error) as e:
-                    # Skip malformed records
-                    continue
-
-        print(f"    ✓ Imported {count} candidates from {file_path.name}")
-        total_count += count
-
-        conn.commit()
-
-    print(f"  ✓ Total candidates imported: {total_count}")
-    return total_count
+    print("\nSkipping FEC candidates (handled by scripts/import_fec_candidates.py)")
+    return 0
 
 
 def add_metadata(conn: sqlite3.Connection, stats: Dict[str, int]) -> None:

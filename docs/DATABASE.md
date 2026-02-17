@@ -169,56 +169,106 @@ For CivicScope mobile app, we recommend **Option A** with GeoJSON served from a 
 
 ### 5. candidates
 
-FEC candidate records (1979-2026).
+FEC candidate records with composite primary key (candidate_id + election_cycle). Populated by `scripts/import_fec_candidates.py` from both Candidate-Master (biographical) and All-Candidates (financial) FEC bulk files.
 
 ```sql
 CREATE TABLE candidates (
-    candidate_id TEXT PRIMARY KEY,    -- FEC candidate ID
-    candidate_name TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,           -- FEC candidate ID (e.g., "H0CA12345")
+    election_cycle INTEGER NOT NULL,      -- Even-year cycle (2024, 2026, etc.)
+    candidate_name TEXT NOT NULL,         -- FEC format: "LAST, FIRST MIDDLE"
 
-    -- Election info
-    office TEXT,                      -- 'H' (House), 'S' (Senate), 'P' (President)
-    office_state TEXT,
-    office_district TEXT,
+    -- Office info (from Candidate-Master field 5)
+    office TEXT,                          -- 'H' (House), 'S' (Senate), 'P' (President)
+    office_state TEXT,                    -- Two-letter state code
+    office_district TEXT,                 -- District number or '00'
 
     -- Party and status
-    party_code TEXT,                  -- 'DEM', 'REP', 'IND', etc.
-    party_full_name TEXT,
-    incumbent_challenger_status TEXT, -- 'I', 'C', 'O'
-    candidate_status TEXT,            -- 'C' (candidate), 'F' (future), 'N' (not yet candidate), 'P' (prior candidate)
+    party_code TEXT,                      -- 'DEM', 'REP', 'LIB', 'IND', etc.
+    incumbent_challenger_status TEXT,     -- 'I' (incumbent), 'C' (challenger), 'O' (open seat)
+    candidate_status TEXT,               -- 'C' (candidate), 'F' (future), 'N' (not yet), 'P' (prior)
 
-    -- Election cycle
-    election_year INTEGER NOT NULL,
-    election_cycle INTEGER NOT NULL,
+    -- Election year from Candidate-Master
+    election_year INTEGER,
 
-    -- Financial summary (from most recent cycle)
+    -- Financial summary (from All-Candidates overlay)
     total_receipts REAL,
     total_disbursements REAL,
     cash_on_hand REAL,
-    total_contributions REAL,
+    total_individual_contributions REAL,
     candidate_contributions REAL,
+    candidate_loans REAL,
+    pac_contributions REAL,
+    party_contributions REAL,
+    debts_owed REAL,
+    coverage_end_date TEXT,
 
     -- Principal campaign committee
     principal_committee_id TEXT,
 
     -- Address
-    mailing_address_1 TEXT,
-    mailing_address_2 TEXT,
     mailing_city TEXT,
     mailing_state TEXT,
     mailing_zip TEXT,
 
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (principal_committee_id) REFERENCES committees(committee_id)
+    PRIMARY KEY (candidate_id, election_cycle)
 );
 
 CREATE INDEX idx_candidates_office ON candidates(office);
-CREATE INDEX idx_candidates_year ON candidates(election_year);
 CREATE INDEX idx_candidates_state ON candidates(office_state);
 CREATE INDEX idx_candidates_party ON candidates(party_code);
 CREATE INDEX idx_candidates_cycle ON candidates(election_cycle);
+CREATE INDEX idx_candidates_cycle_office ON candidates(election_cycle, office, office_state);
+```
+
+### 5b. election_races
+
+Election race matchups derived from candidates table. Each race groups all candidates running for the same office/state/district in a cycle. Incumbent linkage via `congress_members.fec_id`.
+
+```sql
+CREATE TABLE election_races (
+    race_id TEXT PRIMARY KEY,             -- e.g., "2026-H-CA-12", "2026-S-AZ"
+    election_cycle INTEGER NOT NULL,
+    office TEXT NOT NULL,                 -- H, S, P
+    state TEXT NOT NULL,
+    district TEXT,                        -- NULL for Senate/President
+    incumbent_bioguide_id TEXT,           -- FK to congress_members.id
+    incumbent_fec_id TEXT,
+    incumbent_party TEXT,
+    total_candidates INTEGER DEFAULT 0,
+    challenger_count INTEGER DEFAULT 0,
+    open_seat INTEGER DEFAULT 0,          -- 1 if no incumbent running
+    rating TEXT,                          -- solid_d, likely_d, lean_d, tossup, lean_r, likely_r, solid_r
+    rating_source TEXT,                   -- 'fivethirtyeight', 'cook', etc.
+    rating_date TEXT,
+    FOREIGN KEY (incumbent_bioguide_id) REFERENCES congress_members(id)
+);
+
+CREATE INDEX idx_races_cycle ON election_races(election_cycle);
+CREATE INDEX idx_races_incumbent ON election_races(incumbent_bioguide_id);
+```
+
+### 5c. race_candidates
+
+Denormalized join table for fast app queries. Contains key candidate fields needed for race display without joining back to the candidates table.
+
+```sql
+CREATE TABLE race_candidates (
+    race_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    election_cycle INTEGER NOT NULL,
+    candidate_name TEXT,
+    party_code TEXT,
+    incumbent_challenger_status TEXT,
+    total_receipts REAL,
+    cash_on_hand REAL,
+    total_individual_contributions REAL,
+    PRIMARY KEY (race_id, candidate_id),
+    FOREIGN KEY (race_id) REFERENCES election_races(race_id)
+);
+
+CREATE INDEX idx_race_cand_race ON race_candidates(race_id);
 ```
 
 ### 6. candidates_fts
@@ -227,12 +277,11 @@ Full-text search index for candidates.
 
 ```sql
 CREATE VIRTUAL TABLE candidates_fts USING fts5(
-    candidate_id,
+    candidate_id UNINDEXED,
+    election_cycle UNINDEXED,
     candidate_name,
     office_state,
-    party_full_name,
-    content=candidates,
-    content_rowid=rowid
+    party_code
 );
 ```
 

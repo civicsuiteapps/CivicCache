@@ -157,11 +157,33 @@ _s(
     description="Import FEC committee master files",
 )
 _s(
+    "fec_candidates",
+    script="import_fec_candidates.py",
+    tier="full",
+    depends_on=["fec_committees", "legislators"],
+    description="Import FEC candidates with correct field mapping + races",
+)
+_s(
     "fec_summary",
     script="import_fec_summary.py",
     tier="full",
     depends_on=["fec_committees"],
     description="Import FEC financial summaries",
+)
+_s(
+    "race_ratings",
+    script="import_race_ratings.py",
+    tier="full",
+    depends_on=["fec_candidates"],
+    description="Import race ratings (FiveThirtyEight / CSV)",
+)
+_s(
+    "openfec_candidates",
+    script="import_openfec_candidates.py",
+    tier="full",
+    depends_on=["fec_candidates"],
+    required_env=["OPENFEC_API_KEY"],
+    description="Weekly OpenFEC API candidate updates",
 )
 _s(
     "district_boundaries",
@@ -238,6 +260,12 @@ def _snapshot_stats() -> Dict[str, Optional[int]]:
         "staff": _db_stat("staff", "SELECT COUNT(*) FROM congressional_staff"),
         "fec_summaries": _db_stat(
             "fec_summaries", "SELECT COUNT(*) FROM member_fec_summary"
+        ),
+        "candidates": _db_stat(
+            "candidates", "SELECT COUNT(*) FROM candidates"
+        ),
+        "election_races": _db_stat(
+            "election_races", "SELECT COUNT(*) FROM election_races"
         ),
     }
 

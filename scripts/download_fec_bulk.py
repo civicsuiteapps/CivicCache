@@ -32,6 +32,7 @@ BASE_URL = "https://www.fec.gov/files/bulk-downloads"
 # type-key -> (subdirectory, filename template with {yy} = 2-digit cycle)
 FILE_TYPES = {
     "all-candidates": ("All-Candidates", "weball{yy}.zip"),
+    "candidate-master": ("Candidate-Master", "cn{yy}.zip"),
     "linkages": ("Candidate-Committee-Linkages", "ccl{yy}.zip"),
     "committee-master": ("Committee-Master", "cm{yy}.zip"),
     "committee-contributions": ("Contributions-from-Committees", "pas2{yy}.zip"),
@@ -41,6 +42,7 @@ FILE_TYPES = {
 # Default types (exclude individual-contributions -- 10GB+ per cycle)
 DEFAULT_TYPES = [
     "all-candidates",
+    "candidate-master",
     "linkages",
     "committee-master",
     "committee-contributions",

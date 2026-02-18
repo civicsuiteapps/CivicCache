@@ -1,6 +1,11 @@
 # CivicCache Project Status
 
-**Last Updated**: November 5, 2025
+**Last Updated**: February 18, 2026
+
+## 📅 Recent Changes
+
+### February 18, 2026
+- Fixed FEC candidate import script: Changed PRAGMA foreign_keys from ON to OFF to allow flexible data import during initial population
 
 ## ✅ Completed
 

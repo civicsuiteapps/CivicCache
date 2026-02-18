@@ -705,7 +705,7 @@ def main() -> int:
         return 1
 
     conn = sqlite3.connect(str(args.db))
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("PRAGMA journal_mode = WAL")
 
     try:

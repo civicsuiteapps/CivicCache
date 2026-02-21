@@ -508,7 +508,8 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
                 """
                 SELECT candidate_id, candidate_name, party_code,
                        incumbent_challenger_status, total_receipts,
-                       cash_on_hand, total_individual_contributions
+                       cash_on_hand, total_individual_contributions,
+                       principal_committee_id
                 FROM candidates
                 WHERE election_cycle = ? AND office = ? AND office_state = ?
                 ORDER BY total_receipts DESC NULLS LAST
@@ -520,7 +521,8 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
                 """
                 SELECT candidate_id, candidate_name, party_code,
                        incumbent_challenger_status, total_receipts,
-                       cash_on_hand, total_individual_contributions
+                       cash_on_hand, total_individual_contributions,
+                       principal_committee_id
                 FROM candidates
                 WHERE election_cycle = ? AND office = ? AND office_state = ?
                       AND (office_district = ? OR office_district = '' OR office_district = '00')
@@ -535,11 +537,12 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
                 INSERT OR REPLACE INTO race_candidates (
                     race_id, candidate_id, election_cycle,
                     candidate_name, party_code, incumbent_challenger_status,
-                    total_receipts, cash_on_hand, total_individual_contributions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_receipts, cash_on_hand, total_individual_contributions,
+                    principal_committee_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (race_id, cand[0], cycle, cand[1], cand[2], cand[3],
-                 cand[4], cand[5], cand[6]),
+                 cand[4], cand[5], cand[6], cand[7]),
             )
             total += 1
 
@@ -624,6 +627,9 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
             total_receipts REAL,
             cash_on_hand REAL,
             total_individual_contributions REAL,
+            principal_committee_id TEXT,
+            image_url TEXT,
+            image_blob BLOB,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )

@@ -196,6 +196,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
             total_receipts REAL,
             cash_on_hand REAL,
             total_individual_contributions REAL,
+            principal_committee_id TEXT,
+            image_url TEXT,
+            image_blob BLOB,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )

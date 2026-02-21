@@ -178,6 +178,14 @@ _s(
     description="Import race ratings (FiveThirtyEight / CSV)",
 )
 _s(
+    "candidate_photos",
+    script="import_candidate_photos.py",
+    args=["--cycle", "2026"],
+    tier="full",
+    depends_on=["fec_candidates"],
+    description="Import candidate photos from Wikidata",
+)
+_s(
     "openfec_candidates",
     script="import_openfec_candidates.py",
     tier="full",

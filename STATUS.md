@@ -1,8 +1,14 @@
 # CivicCache Project Status
 
-**Last Updated**: February 18, 2026
+**Last Updated**: February 21, 2026
 
 ## 📅 Recent Changes
+
+### February 21, 2026
+- Added candidate photos support: New import_candidate_photos.py script to fetch candidate images from Wikidata
+- Extended race_candidates schema: Added principal_committee_id, image_url, and image_blob columns
+- Updated FEC candidate import: Now extracts and stores principal_committee_id from candidates table
+- Integrated candidate photos into update pipeline
 
 ### February 18, 2026
 - Fixed FEC candidate import script: Changed PRAGMA foreign_keys from ON to OFF to allow flexible data import during initial population

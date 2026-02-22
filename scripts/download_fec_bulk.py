@@ -116,6 +116,11 @@ def main() -> int:
         help="Include individual-contributions (10GB+ per cycle)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete existing files before downloading (refresh stale data)",
+    )
+    parser.add_argument(
         "--dest",
         type=Path,
         default=FEC_DIR,
@@ -154,6 +159,11 @@ def main() -> int:
             filename = filename_tpl.format(yy=yy)
             url = f"{BASE_URL}/{cycle}/{filename}"
             dest = args.dest / subdir / filename
+
+            if args.force and dest.exists():
+                size_mb = dest.stat().st_size / (1024 * 1024)
+                print(f"  Force: removing {dest.name} ({size_mb:.1f} MB)")
+                dest.unlink()
 
             success = download_file(url, dest)
             if success:

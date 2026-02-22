@@ -16,6 +16,7 @@ env:
   CONGRESS_GOV_API_KEY: ${{ secrets.CONGRESS_GOV_API_KEY }}
   CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
   GOVINFO_API_KEY: ${{ secrets.GOVINFO_API_KEY }}
+  OPENFEC_API_KEY: ${{ secrets.OPENFEC_API_KEY }}
 
 jobs:
   update:

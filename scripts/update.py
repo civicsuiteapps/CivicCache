@@ -149,31 +149,40 @@ _s(
     description="Import district demographics from Census",
 )
 
-# --- full ---
+# --- monthly ---  (FEC bulk pipeline)
+_s(
+    "fec_bulk_download",
+    script="download_fec_bulk.py",
+    args=["--cycles", "2026", "--force"],
+    tier="monthly",
+    description="Download current-cycle FEC bulk data files",
+)
 _s(
     "fec_committees",
     script="import_fec_committees.py",
-    tier="full",
+    tier="monthly",
+    depends_on=["fec_bulk_download"],
     description="Import FEC committee master files",
 )
 _s(
     "fec_candidates",
     script="import_fec_candidates.py",
-    tier="full",
+    args=["--current-only"],
+    tier="monthly",
     depends_on=["fec_committees", "legislators"],
     description="Import FEC candidates with correct field mapping + races",
 )
 _s(
     "fec_summary",
     script="import_fec_summary.py",
-    tier="full",
+    tier="monthly",
     depends_on=["fec_committees"],
     description="Import FEC financial summaries",
 )
 _s(
     "race_ratings",
     script="import_race_ratings.py",
-    tier="full",
+    tier="monthly",
     depends_on=["fec_candidates"],
     description="Import race ratings (FiveThirtyEight / CSV)",
 )
@@ -181,15 +190,14 @@ _s(
     "candidate_photos",
     script="import_candidate_photos.py",
     args=["--cycle", "2026"],
-    tier="full",
+    tier="monthly",
     depends_on=["fec_candidates"],
     description="Import candidate photos from Wikidata",
 )
 _s(
     "openfec_candidates",
     script="import_openfec_candidates.py",
-    tier="full",
-    depends_on=["fec_candidates"],
+    tier="weekly",
     required_env=["OPENFEC_API_KEY"],
     description="Weekly OpenFEC API candidate updates",
 )

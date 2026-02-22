@@ -4,7 +4,15 @@
 
 ## 📅 Recent Changes
 
-### February 21, 2026
+### February 21, 2026 (Evening Update)
+- Optimized FEC bulk download pipeline: Added --force flag to refresh stale data and delete existing files before downloading
+- Restructured update tiers: Moved FEC-related imports from "full" to "monthly" tier for better scheduling
+- Added new fec_bulk_download step: Downloads current-cycle FEC data files (2026) as dependency for committee/candidate imports
+- Enhanced candidate imports: Limited FEC candidates to current election cycle only (--current-only flag)
+- Updated CI/CD workflows: Added OPENFEC_API_KEY environment variable to GitHub Actions monthly and weekly update workflows
+- Optimized weekly updates: Moved openfec_candidates import to weekly tier for more frequent OpenFEC API sync
+
+### February 21, 2026 (Morning)
 - Added candidate photos support: New import_candidate_photos.py script to fetch candidate images from Wikidata
 - Extended race_candidates schema: Added principal_committee_id, image_url, and image_blob columns
 - Updated FEC candidate import: Now extracts and stores principal_committee_id from candidates table

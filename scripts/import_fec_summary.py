@@ -26,6 +26,8 @@ except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
     _CFG_FEC = Path("FEC-Bulk-Data")
 
+from utils import create_connection
+
 # Database location
 DB_PATH = _CFG_DB
 
@@ -53,16 +55,6 @@ EMPLOYER_SUFFIXES = re.compile(
     re.IGNORECASE
 )
 
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
 
 
 def create_tables(conn: sqlite3.Connection) -> None:
@@ -659,7 +651,7 @@ def main():
     print("="*60)
 
     try:
-        conn = create_connection()
+        conn = create_connection(use_wal=True)
 
         # Setup
         create_tables(conn)

@@ -66,6 +66,8 @@ except ImportError:
     _CFG_GOVINFO = ""
     _CFG_CONGRESS = 119
 
+from utils import create_connection
+
 # Configuration
 GOVINFO_API_KEY = os.getenv('GOVINFO_API_KEY') or _CFG_GOVINFO or 'DEMO_KEY'
 BASE_URL = "https://api.govinfo.gov"

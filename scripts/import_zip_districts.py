@@ -22,21 +22,14 @@ try:
 except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
 
+from utils import create_connection
+
 # Database location
 DB_PATH = _CFG_DB
 
 # Source CSV file
 CSV_PATH = Path("data/raw/zip_to_district/zccd.csv")
 
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 
 def create_zip_districts_table(conn: sqlite3.Connection) -> None:

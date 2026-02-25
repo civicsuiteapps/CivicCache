@@ -39,8 +39,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Build fresh database
-        run: python3 scripts/build_database.py
+      - name: Build fresh database schema
+        run: python3 scripts/build_database.py --fresh --schema-only
 
       - name: Download FEC bulk data
         if: ${{ inputs.include_fec }}
@@ -48,6 +48,9 @@ jobs:
 
       - name: Run full pipeline
         run: python3 scripts/update.py full --json | tee pipeline-output.json
+
+      - name: Health check
+        run: python3 scripts/update.py --check --json
 
       - name: Optimize database
         run: sqlite3 data/civic_cache.db "VACUUM; ANALYZE;"

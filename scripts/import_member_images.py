@@ -22,6 +22,8 @@ except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
     _CFG_CONGRESS = 119
 
+from utils import create_connection, download_image
+
 # Database location
 DB_PATH = _CFG_DB
 
@@ -36,30 +38,6 @@ else:
         Path.home() / f"GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/{_CFG_CONGRESS}th-congress-members.json",
     ]
     MEMBERS_JSON = next((p for p in _candidates if p.exists()), _candidates[0])
-
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def download_image(url: str, timeout: int = 10) -> Optional[bytes]:
-    """Download an image from a URL and return the bytes."""
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={'User-Agent': 'CivicCache/1.0'}
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.read()
-    except Exception as e:
-        print(f"  ⚠️  Failed to download {url}: {e}")
-        return None
 
 
 def import_member_images(conn: sqlite3.Connection) -> Dict[str, int]:

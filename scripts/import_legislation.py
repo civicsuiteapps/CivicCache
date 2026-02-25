@@ -27,6 +27,8 @@ except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
     _CFG_KEY = ""
 
+from utils import create_connection, api_request
+
 # Database location
 DB_PATH = _CFG_DB
 
@@ -37,51 +39,7 @@ CONGRESS_NUMBER = _CFG_CONGRESS
 # Get API key from environment or use DEMO_KEY
 API_KEY = os.environ.get("CONGRESS_API_KEY") or os.environ.get("CONGRESS_GOV_API_KEY") or _CFG_KEY or "DEMO_KEY"
 
-# Rate limiting
-REQUEST_DELAY = 0.5  # Delay between API requests (seconds)
 BATCH_COMMIT_SIZE = 50  # Commit to DB every N bills
-
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def api_request(url: str, retries: int = 3) -> Optional[Dict]:
-    """Make an API request with retries."""
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'CivicCache/1.0'}
-            )
-            with urllib.request.urlopen(req, timeout=30) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                time.sleep(REQUEST_DELAY)
-                return data
-        except urllib.error.HTTPError as e:
-            if e.code == 429:  # Rate limited
-                wait_time = 2 ** attempt
-                print(f"  Rate limited, waiting {wait_time}s...")
-                time.sleep(wait_time)
-            elif e.code == 404:
-                return None
-            else:
-                print(f"  HTTP Error {e.code}: {e.reason}")
-                if attempt == retries - 1:
-                    return None
-        except Exception as e:
-            print(f"  Error: {e}")
-            if attempt == retries - 1:
-                return None
-            time.sleep(1)
-
-    return None
 
 
 def fetch_all_bills() -> List[Dict]:

@@ -29,6 +29,8 @@ except ImportError:
                     key, value = line.split('=', 1)
                     os.environ.setdefault(key, value)
 
+from utils import create_connection, api_request
+
 # Database locations
 CIVICCACHE_DB = _CFG_DB
 CIVICSCOPE_DB = Path.home() / "GIT/CivicScope/CivicScope/Resources/civic_cache.db"
@@ -41,41 +43,10 @@ CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CON
 REQUEST_DELAY = 0.75  # ~4800 requests/hour max
 
 
-def api_request(url: str, retries: int = 3):
-    """Make an API request with retries."""
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'CivicCache/1.0'}
-            )
-            with urllib.request.urlopen(req, timeout=30) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                time.sleep(REQUEST_DELAY)
-                return data
-        except urllib.error.HTTPError as e:
-            if e.code == 429:  # Rate limited
-                wait_time = 2 ** attempt * 5
-                print(f"  Rate limited, waiting {wait_time}s...")
-                time.sleep(wait_time)
-            elif e.code == 404:
-                return None
-            else:
-                print(f"  HTTP Error {e.code}: {e.reason}")
-                if attempt == retries - 1:
-                    return None
-        except Exception as e:
-            print(f"  Error: {e}")
-            if attempt == retries - 1:
-                return None
-            time.sleep(1)
-    return None
-
-
 def fetch_birth_year(bioguide_id: str) -> int | None:
     """Fetch birth year for a member from Congress.gov API."""
     url = f"{CONGRESS_API_BASE}/member/{bioguide_id}?api_key={CONGRESS_API_KEY}&format=json"
-    data = api_request(url)
+    data = api_request(url, delay=0.75)
 
     if data and 'member' in data:
         birth_year = data['member'].get('birthYear')

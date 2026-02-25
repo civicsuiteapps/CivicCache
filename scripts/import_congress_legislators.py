@@ -44,6 +44,8 @@ except ImportError:
     print("ERROR: PyYAML not installed. Run: pip3 install pyyaml")
     exit(1)
 
+from utils import download_yaml
+
 # Configuration
 LEGISLATORS_CURRENT_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-current.yaml"
 LEGISLATORS_HISTORICAL_URL = "https://raw.githubusercontent.com/unitedstates/congress-legislators/main/legislators-historical.yaml"
@@ -89,17 +91,6 @@ except ImportError:
                     os.environ.setdefault(key, value)
 
 DATABASE_PATH = _CFG_DB or (Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db'))
-
-
-def download_yaml(url: str, item_name: str = "legislators") -> List[Dict]:
-    """Download and parse YAML file from URL."""
-    print(f"Downloading: {url}")
-    with urllib.request.urlopen(url, timeout=60) as response:
-        content = response.read().decode('utf-8')
-    print(f"  Downloaded {len(content):,} bytes")
-    data = yaml.safe_load(content)
-    print(f"  Parsed {len(data)} {item_name}")
-    return data
 
 
 def download_social_media() -> Dict[str, Dict]:
@@ -295,10 +286,10 @@ def main():
     print()
 
     # Download current legislators
-    legislators = download_yaml(LEGISLATORS_CURRENT_URL)
+    legislators = download_yaml(LEGISLATORS_CURRENT_URL, item_name="legislators")
 
     if args.include_historical:
-        historical = download_yaml(LEGISLATORS_HISTORICAL_URL)
+        historical = download_yaml(LEGISLATORS_HISTORICAL_URL, item_name="legislators")
         legislators.extend(historical)
 
     # Download social media data

@@ -21,6 +21,8 @@ try:
 except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
 
+from utils import create_connection
+
 # Database location
 DB_PATH = _CFG_DB
 
@@ -31,7 +33,8 @@ if _civicscope_data:
 else:
     _candidates = [
         Path(__file__).parent.parent / "data" / "DistrictData.json",
-        Path.home() / "GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/DistrictData.json",
+        Path(__file__).parent.parent / "data" / "raw" / "congress" / "DistrictData.json",
+        Path.home() / "GIT/CivicScope/CivicScope/Resources/DistrictData.json",
     ]
     DISTRICT_JSON_PATH = next((p for p in _candidates if p.exists()), _candidates[0])
 
@@ -51,15 +54,6 @@ FIPS_TO_STATE = {
     "78": "VI"
 }
 
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 
 def import_districts(conn: sqlite3.Connection) -> None:

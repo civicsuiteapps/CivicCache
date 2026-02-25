@@ -33,6 +33,8 @@ except ImportError:
 
 DB_PATH = _CFG_DB
 
+from utils import download_image
+
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 USER_AGENT = "CivicCache/1.0 (civic research project; https://github.com/civiccache)"
 
@@ -85,25 +87,6 @@ def commons_thumb_url(file_page_url: str, width: int = THUMB_WIDTH) -> str:
     # Extract filename from the URL
     filename = file_page_url.rsplit("/", 1)[-1]
     return f"https://commons.wikimedia.org/w/thumb.php?f={filename}&w={width}"
-
-
-# ---------------------------------------------------------------------------
-# Image download
-# ---------------------------------------------------------------------------
-
-
-def download_image(url: str, timeout: int = 15) -> bytes | None:
-    """Download an image and return bytes, or None on failure."""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-            # Sanity check -- reject empty or tiny responses
-            if len(data) < 100:
-                return None
-            return data
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +206,7 @@ def main() -> int:
                 f"({stats['downloaded']} downloaded, {stats['failed']} failed)"
             )
 
-        image_data = download_image(thumb_url)
+        image_data = download_image(thumb_url, user_agent=USER_AGENT)
 
         if image_data:
             rows = store_photo(conn, cid, source_url, image_data)
@@ -231,7 +214,7 @@ def main() -> int:
             stats["rows_updated"] += rows
         else:
             # Try full-size URL as fallback
-            image_data = download_image(source_url)
+            image_data = download_image(source_url, user_agent=USER_AGENT)
             if image_data:
                 rows = store_photo(conn, cid, source_url, image_data)
                 stats["downloaded"] += 1

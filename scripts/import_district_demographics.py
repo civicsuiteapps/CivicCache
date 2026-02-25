@@ -30,6 +30,8 @@ except ImportError:
     except Exception:
         pass
 
+from utils import create_connection
+
 # Configuration
 DB_PATH = _CFG_DB
 CENSUS_API_KEY = os.getenv('CENSUS_API_KEY') or _CFG_CENSUS
@@ -58,15 +60,6 @@ CENSUS_VARIABLES = {
     'B25077_001E': 'median_home_value',             # Median Home Value
 }
 
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 
 def fetch_census_data(state_fips: str, district_code: str) -> Optional[Dict]:

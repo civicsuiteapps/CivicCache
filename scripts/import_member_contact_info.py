@@ -34,6 +34,8 @@ except ImportError:
                     key, value = line.split('=', 1)
                     os.environ.setdefault(key, value)
 
+from utils import create_connection, api_request
+
 # Database location
 DB_PATH = _CFG_DB
 
@@ -46,60 +48,11 @@ CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get("CON
 # Current Congress session
 CONGRESS_NUMBER = _CFG_CONGRESS
 
-# Rate limiting
-REQUEST_DELAY = 1.0  # Delay between API requests (seconds)
-
-
-def create_connection() -> sqlite3.Connection:
-    """Create and return a database connection."""
-    if not DB_PATH.exists():
-        raise FileNotFoundError(f"Database not found at {DB_PATH}")
-
-    conn = sqlite3.Connection(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def api_request_congress(url: str, retries: int = 3) -> Optional[Dict]:
-    """Make a Congress.gov API request with retries."""
-    if not CONGRESS_API_KEY:
-        print("  ⚠️  Congress.gov API key not found")
-        return None
-
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'CivicCache/1.0'}
-            )
-            with urllib.request.urlopen(req, timeout=30) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                time.sleep(REQUEST_DELAY)
-                return data
-        except urllib.error.HTTPError as e:
-            if e.code == 429:  # Rate limited
-                wait_time = 2 ** attempt
-                print(f"  Rate limited, waiting {wait_time}s...")
-                time.sleep(wait_time)
-            elif e.code == 404:
-                return None
-            else:
-                print(f"  HTTP Error {e.code}: {e.reason}")
-                if attempt == retries - 1:
-                    return None
-        except Exception as e:
-            print(f"  Error: {e}")
-            if attempt == retries - 1:
-                return None
-            time.sleep(1)
-
-    return None
-
 
 def fetch_congress_gov_member_detail(bioguide_id: str) -> Optional[Dict]:
     """Fetch detailed member information from Congress.gov API."""
     url = f"{CONGRESS_API_BASE}/member/{bioguide_id}?api_key={CONGRESS_API_KEY}&format=json"
-    data = api_request_congress(url)
+    data = api_request(url, delay=1.0)
     return data.get('member') if data else None
 
 

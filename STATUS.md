@@ -1,8 +1,17 @@
 # CivicCache Project Status
 
-**Last Updated**: February 21, 2026
+**Last Updated**: February 24, 2026
 
 ## 📅 Recent Changes
+
+### February 24, 2026
+- Archived legacy and incremental update scripts into scripts/archive/
+- Streamlined CI/CD workflows: Removed daily/monthly/weekly update workflows, focusing on full-rebuild workflow
+- Enhanced build_database.py: Added --fresh and --schema-only flags for flexible schema/data management
+- Updated full-rebuild.yml: Added health check step and optimized schema building for better validation
+- Created automation infrastructure: Added install_launchd.sh and run_pipeline.sh for local scheduled pipeline execution
+- Added utility functions: Created scripts/utils.py for shared pipeline functionality
+- Added documentation: Created candidate-photo-enrichment-plan.md and pipeline-automation-playbook.md
 
 ### February 21, 2026 (Evening Update)
 - Optimized FEC bulk download pipeline: Added --force flag to refresh stale data and delete existing files before downloading

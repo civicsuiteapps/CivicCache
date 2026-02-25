@@ -14,6 +14,8 @@ Usage:
     python3 scripts/update.py --list-stages      # Show all stages and tiers
     python3 scripts/update.py daily --dry-run    # Show what would run
     python3 scripts/update.py daily --json       # JSON output for CI parsing
+    python3 scripts/update.py --check            # Health check (human-readable)
+    python3 scripts/update.py --check --json     # Health check (JSON output)
 """
 
 import argparse
@@ -583,6 +585,143 @@ def list_stages() -> None:
 
 
 # ---------------------------------------------------------------------------
+# --check  (health check)
+# ---------------------------------------------------------------------------
+
+EXPECTED_TABLES = [
+    "states",
+    "congress_members",
+    "legislation",
+    "legislation_summaries",
+    "legislation_sponsors",
+    "legislation_subjects",
+    "legislation_actions",
+    "legislation_related",
+    "congressional_committees",
+    "member_committee_assignments",
+    "member_positions",
+    "member_fec_summary",
+    "member_top_contributors",
+    "committees",
+    "candidates",
+    "election_races",
+    "race_candidates",
+    "candidate_committee_linkages",
+    "roll_call_votes",
+    "member_votes",
+    "congressional_staff",
+    "congressional_districts",
+    "district_demographics",
+    "zip_districts",
+    "metadata",
+    "congress_members_fts",
+    "legislation_fts",
+]
+
+MIN_ROW_COUNTS = {
+    "states": 50,
+    "congress_members": 530,
+    "metadata": 1,
+}
+
+
+def run_health_check(json_output: bool = False) -> int:
+    """Validate database health without running imports."""
+    checks = []
+
+    def _check(name: str, ok: bool, detail: str = ""):
+        checks.append({"name": name, "ok": ok, "detail": detail})
+
+    # 1. DB exists and is readable
+    _check("db_exists", DB_PATH.exists(), str(DB_PATH))
+    if not DB_PATH.exists():
+        if json_output:
+            print(json.dumps({"healthy": False, "checks": checks}, indent=2))
+        else:
+            print(f"FAIL  Database not found: {DB_PATH}")
+        return 1
+
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+    except Exception as e:
+        _check("db_readable", False, str(e))
+        if json_output:
+            print(json.dumps({"healthy": False, "checks": checks}, indent=2))
+        else:
+            print(f"FAIL  Cannot open database: {e}")
+        return 1
+    _check("db_readable", True)
+
+    # 2. All expected tables exist
+    existing_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
+    }
+    missing = [t for t in EXPECTED_TABLES if t not in existing_tables]
+    _check("tables_present", len(missing) == 0, f"missing: {', '.join(missing)}" if missing else f"{len(EXPECTED_TABLES)} tables")
+
+    # 3. Minimum row counts
+    for table, min_count in MIN_ROW_COUNTS.items():
+        if table not in existing_tables:
+            _check(f"rows_{table}", False, "table missing")
+            continue
+        try:
+            count = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+            _check(f"rows_{table}", count >= min_count, f"{count:,} rows (min {min_count})")
+        except Exception as e:
+            _check(f"rows_{table}", False, str(e))
+
+    # 4. Data freshness via metadata timestamps
+    try:
+        row = conn.execute(
+            "SELECT value FROM metadata WHERE key = 'database_created'"
+        ).fetchone()
+        if row:
+            _check("freshness_created", True, row[0])
+        else:
+            _check("freshness_created", False, "no database_created metadata")
+    except Exception:
+        _check("freshness_created", False, "metadata table error")
+
+    try:
+        row = conn.execute(
+            "SELECT key, value, updated_at FROM metadata ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            _check("freshness_latest", True, f"{row[0]}={row[1]} at {row[2]}")
+        else:
+            _check("freshness_latest", False, "no metadata rows")
+    except Exception:
+        _check("freshness_latest", False, "metadata query error")
+
+    # 5. Foreign key integrity check
+    try:
+        fk_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+        _check("fk_integrity", len(fk_errors) == 0, f"{len(fk_errors)} violations" if fk_errors else "clean")
+    except Exception as e:
+        _check("fk_integrity", False, str(e))
+
+    conn.close()
+
+    # Output
+    healthy = all(c["ok"] for c in checks)
+
+    if json_output:
+        print(json.dumps({"healthy": healthy, "checks": checks}, indent=2))
+    else:
+        print(f"\nCivicCache Health Check  |  DB: {DB_PATH}\n")
+        for c in checks:
+            icon = "OK  " if c["ok"] else "FAIL"
+            detail = f"  ({c['detail']})" if c["detail"] else ""
+            print(f"  {icon}  {c['name']}{detail}")
+        print(f"\n  {'HEALTHY' if healthy else 'UNHEALTHY'}")
+
+    return 0 if healthy else 1
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -603,6 +742,9 @@ def main() -> int:
         "--stage", help="Run a single named stage"
     )
     parser.add_argument(
+        "--check", action="store_true", help="Run health check on the database"
+    )
+    parser.add_argument(
         "--list-stages", action="store_true", help="Show all stages and tiers"
     )
     parser.add_argument(
@@ -619,6 +761,9 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.check:
+        return run_health_check(json_output=args.json_output)
 
     if args.list_stages:
         list_stages()

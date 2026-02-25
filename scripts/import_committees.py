@@ -27,6 +27,8 @@ except ImportError:
     print("ERROR: PyYAML not installed. Run: pip3 install pyyaml")
     exit(1)
 
+from utils import download_yaml
+
 try:
     from config import CONGRESS_NUMBER as _CFG_CONGRESS, DB_PATH as _CFG_DB
 except ImportError:
@@ -41,20 +43,6 @@ MEMBERSHIP_URL = "https://raw.githubusercontent.com/unitedstates/congress-legisl
 CURRENT_CONGRESS = _CFG_CONGRESS
 
 DATABASE_PATH = _CFG_DB
-
-
-def download_yaml(url: str, item_name: str = "entries") -> any:
-    """Download and parse YAML file from URL."""
-    print(f"Downloading: {url}")
-    with urllib.request.urlopen(url, timeout=60) as response:
-        content = response.read().decode('utf-8')
-    print(f"  Downloaded {len(content):,} bytes")
-    data = yaml.safe_load(content)
-    if isinstance(data, list):
-        print(f"  Parsed {len(data)} {item_name}")
-    elif isinstance(data, dict):
-        print(f"  Parsed {len(data)} {item_name}")
-    return data
 
 
 def create_tables(conn: sqlite3.Connection) -> None:

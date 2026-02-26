@@ -1,8 +1,18 @@
 # CivicCache Project Status
 
-**Last Updated**: February 24, 2026
+**Last Updated**: February 25, 2026
 
 ## 📅 Recent Changes
+
+### February 25, 2026
+- Added launchd plist files for macOS scheduled execution (daily, weekly, monthly)
+- Implemented candidate_top_contributors table for tracking top PAC/committee donors to candidates
+- Enhanced FEC bulk download pipeline: Added automatic zip extraction with smart filename mapping
+- Updated import_candidate_contributors.py: New script to populate candidate donor information
+- Improved district boundaries import: Added bounding box calculation and storage (bbox JSON)
+- Refined member image import paths: Updated search locations for congress members JSON file
+- Enhanced database connection: Added 30-second busy timeout for better concurrency handling
+- Updated pipeline configuration: Added candidate_contributors to monthly tier with proper dependencies
 
 ### February 24, 2026
 - Archived legacy and incremental update scripts into scripts/archive/

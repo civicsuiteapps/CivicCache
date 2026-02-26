@@ -102,19 +102,26 @@ def import_districts(conn: sqlite3.Connection) -> None:
         except ValueError:
             district_number = 0
 
-        # Store polygons as JSON
+        # Store polygons as JSON and compute bounding box
         polygons_json = json.dumps(polygons)
+        all_points = [pt for ring in polygons for pt in ring]
+        if all_points:
+            lats = [p[0] for p in all_points]
+            lons = [p[1] for p in all_points]
+            bbox_json = json.dumps([min(lons), min(lats), max(lons), max(lats)])
+        else:
+            bbox_json = json.dumps([])
 
         try:
             conn.execute("""
                 INSERT INTO congressional_districts (
                     state_fips, state_code, district_code, district_number,
                     name, geoid, center_latitude, center_longitude,
-                    population, polygons
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    population, geojson, bbox
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 state_fips, state_code, district_code, district_number,
-                name, geoid, center_lat, center_lon, population, polygons_json
+                name, geoid, center_lat, center_lon, population, polygons_json, bbox_json
             ))
             imported_count += 1
 

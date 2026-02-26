@@ -40,6 +40,7 @@ def create_connection(
         raise FileNotFoundError(f"Database not found at {path}")
 
     conn = sqlite3.Connection(path)
+    conn.execute("PRAGMA busy_timeout = 30000")
     if foreign_keys:
         conn.execute("PRAGMA foreign_keys = ON")
     if use_wal:

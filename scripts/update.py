@@ -182,6 +182,14 @@ _s(
     description="Import FEC financial summaries",
 )
 _s(
+    "candidate_contributors",
+    script="import_candidate_contributors.py",
+    args=["--cycle", "2026"],
+    tier="monthly",
+    depends_on=["fec_candidates", "fec_committees"],
+    description="Import top PAC/committee contributors for all candidates",
+)
+_s(
     "race_ratings",
     script="import_race_ratings.py",
     tier="monthly",
@@ -607,6 +615,7 @@ EXPECTED_TABLES = [
     "election_races",
     "race_candidates",
     "candidate_committee_linkages",
+    "candidate_top_contributors",
     "roll_call_votes",
     "member_votes",
     "congressional_staff",

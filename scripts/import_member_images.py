@@ -35,7 +35,8 @@ else:
     # Try common local paths
     _candidates = [
         Path(__file__).parent.parent / "data" / f"{_CFG_CONGRESS}th-congress-members.json",
-        Path.home() / f"GIT/CivicScope.iOS/ReceiptsPleaseApp/Resources/{_CFG_CONGRESS}th-congress-members.json",
+        Path(__file__).parent.parent / "data" / "raw" / "congress" / f"{_CFG_CONGRESS}th-congress-members.json",
+        Path.home() / "GIT/CivicScope/CivicScope/Resources" / f"{_CFG_CONGRESS}th-congress-members.json",
     ]
     MEMBERS_JSON = next((p for p in _candidates if p.exists()), _candidates[0])
 

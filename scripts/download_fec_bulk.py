@@ -13,10 +13,12 @@ import_fec_committees.py and import_fec_summary.py expect.
 
 import argparse
 import os
+import re
 import sys
 import time
 import urllib.request
 import urllib.error
+import zipfile
 from pathlib import Path
 
 from config import FEC_DIR
@@ -47,6 +49,69 @@ DEFAULT_TYPES = [
     "committee-master",
     "committee-contributions",
 ]
+
+
+# Mapping from zip internal names to the standard txt naming convention.
+# The import scripts expect files named like "Candidate-Master_2025-2026.txt".
+EXTRACT_NAMES = {
+    "all-candidates": ("weball{yy}.txt", "All-Candidates_{y1}-{y2}.txt"),
+    "candidate-master": ("cn.txt", "Candidate-Master_{y1}-{y2}.txt"),
+    "linkages": ("ccl.txt", "Candidate-Committee-Linkages_{y1}-{y2}.txt"),
+    "committee-master": ("cm.txt", "Committee-Master_{y1}-{y2}.txt"),
+    "committee-contributions": ("itpas2.txt", "Contributions-from-Committees_{y1}-{y2}.txt"),
+    "individual-contributions": ("itcont.txt", "Contributions-by-Individuals_{y1}-{y2}.txt"),
+}
+
+
+def extract_zip(zip_path: Path, type_key: str, cycle: int) -> bool:
+    """Extract a downloaded zip file to the standard txt naming convention."""
+    yy = str(cycle)[-2:]
+    y1 = cycle - 1
+    y2 = cycle
+    dest_dir = zip_path.parent
+
+    if type_key not in EXTRACT_NAMES:
+        return False
+
+    inner_name, out_template = EXTRACT_NAMES[type_key]
+    inner_name = inner_name.format(yy=yy)
+    out_name = out_template.format(y1=y1, y2=y2)
+    out_path = dest_dir / out_name
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            names = zf.namelist()
+            # Find the data file inside the zip (match by expected name or first .txt)
+            source = None
+            for n in names:
+                if n.lower() == inner_name.lower():
+                    source = n
+                    break
+            if source is None:
+                # Fallback: first .txt file in the archive
+                txt_files = [n for n in names if n.lower().endswith(".txt")]
+                if txt_files:
+                    source = txt_files[0]
+
+            if source is None:
+                print(f"    Warning: no .txt file found in {zip_path.name}")
+                return False
+
+            # Extract to a temp name and rename
+            zf.extract(source, dest_dir)
+            extracted = dest_dir / source
+            if extracted != out_path:
+                if out_path.exists():
+                    out_path.unlink()
+                extracted.rename(out_path)
+
+            size_mb = out_path.stat().st_size / (1024 * 1024)
+            print(f"    Extracted: {out_name} ({size_mb:.1f} MB)")
+            return True
+
+    except (zipfile.BadZipFile, OSError) as exc:
+        print(f"    Warning: failed to extract {zip_path.name}: {exc}")
+        return False
 
 
 def download_file(url: str, dest: Path, retries: int = 3) -> bool:
@@ -164,9 +229,16 @@ def main() -> int:
                 size_mb = dest.stat().st_size / (1024 * 1024)
                 print(f"  Force: removing {dest.name} ({size_mb:.1f} MB)")
                 dest.unlink()
+                # Also remove the previously extracted txt file
+                if tkey in EXTRACT_NAMES:
+                    _, out_tpl = EXTRACT_NAMES[tkey]
+                    old_txt = dest.parent / out_tpl.format(y1=cycle - 1, y2=cycle)
+                    if old_txt.exists():
+                        old_txt.unlink()
 
             success = download_file(url, dest)
             if success:
+                extract_zip(dest, tkey, cycle)
                 ok += 1
             else:
                 fail += 1

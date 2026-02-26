@@ -376,6 +376,22 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS candidate_top_contributors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id TEXT NOT NULL,
+            election_cycle INTEGER NOT NULL,
+            rank INTEGER NOT NULL,
+            committee_id TEXT NOT NULL,
+            committee_name TEXT NOT NULL,
+            committee_type TEXT,
+            total_amount REAL NOT NULL,
+            transaction_count INTEGER DEFAULT 0,
+            UNIQUE(candidate_id, election_cycle, rank),
+            FOREIGN KEY (candidate_id, election_cycle) REFERENCES candidates(candidate_id, election_cycle)
+        )
+    """)
+
     # ------------------------------------------------------------------
     # FEC / election tables
     # ------------------------------------------------------------------
@@ -730,6 +746,9 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         # member_fec_summary / member_top_contributors
         "CREATE INDEX IF NOT EXISTS idx_fec_summary_cycle ON member_fec_summary(election_cycle)",
         "CREATE INDEX IF NOT EXISTS idx_top_contrib_member ON member_top_contributors(bioguide_id, election_cycle)",
+
+        # candidate_top_contributors
+        "CREATE INDEX IF NOT EXISTS idx_cand_top_contrib ON candidate_top_contributors(candidate_id, election_cycle)",
 
         # congressional_districts / district_demographics
         "CREATE INDEX IF NOT EXISTS idx_districts_state_district ON congressional_districts(state_code, district_number)",

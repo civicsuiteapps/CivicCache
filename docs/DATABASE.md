@@ -2,29 +2,86 @@
 
 ## Overview
 
-The CivicCache SQLite database provides optimized access to Congressional and FEC campaign finance data for the CivicScope mobile application. The schema is designed for:
-- Fast queries on mobile devices
-- Full-text search capabilities
-- Efficient data relationships
-- iOS/Android compatibility
+The CivicCache SQLite database provides optimized access to Congressional and FEC campaign finance data for the CivicScope mobile applications (iOS and Android). The database is synced to both platforms as a pre-built asset.
 
-## Database Design Principles
+**Current size**: ~268 MB (vacuumed)
+**Tables**: 28 (plus 5 FTS virtual tables)
+**Congress**: 119th (2025-2026)
 
-1. **Normalized Structure**: Minimize data duplication while maintaining query performance
-2. **Full-Text Search**: FTS5 tables for member names, candidate names, and committees
-3. **Comprehensive Indexing**: Strategic indexes on frequently queried columns
-4. **Foreign Key Constraints**: Maintain data integrity across relationships
-5. **Mobile Optimization**: Efficient for offline-first mobile apps
+## Design Principles
 
-## Core Tables
+1. **Normalized structure** -- minimize duplication while maintaining query performance
+2. **Full-text search** -- FTS5 tables for members, candidates, committees, and legislation
+3. **Comprehensive indexing** -- strategic indexes on frequently queried columns
+4. **Foreign key constraints** -- data integrity across relationships
+5. **Mobile optimization** -- efficient for offline-first mobile apps
+6. **Composite keys** -- FEC tables use `(candidate_id, election_cycle)` for multi-cycle data
 
-### 1. congress_members
+## Table Summary
 
-Current members of the 119th United States Congress (537 members).
+| Table | Rows | Description |
+|-------|-----:|-------------|
+| `states` | 56 | US states and territories |
+| `congress_members` | 537 | 119th Congress members with full metadata |
+| `legislation` | 13,574 | Bills and resolutions |
+| `legislation_summaries` | 3,450 | Bill summaries |
+| `legislation_sponsors` | 142,552 | Sponsors and cosponsors |
+| `legislation_subjects` | 20,802 | Subject tags |
+| `legislation_actions` | 0 | Legislative actions (on-demand) |
+| `legislation_related` | 0 | Related legislation links |
+| `congressional_committees` | 233 | Committees and subcommittees |
+| `member_committee_assignments` | 3,894 | Member-committee assignments |
+| `member_positions` | 6,712 | Member career positions |
+| `member_fec_summary` | 1,013 | Financial summaries per member per cycle |
+| `member_top_contributors` | 10,104 | Top 10 contributors per member per cycle |
+| `candidate_top_contributors` | 7,432 | Top 10 PAC contributors per candidate per cycle |
+| `committees` | 85,397 | FEC political committees and PACs |
+| `candidates` | 129,954 | FEC candidates (all cycles) |
+| `candidate_committee_linkages` | 47,011 | Candidate-committee relationships |
+| `election_races` | 12,470 | Derived race matchups |
+| `race_candidates` | 136,842 | Denormalized race-candidate join |
+| `roll_call_votes` | 438 | House roll-call votes |
+| `member_votes` | 188,516 | Individual member vote positions |
+| `congressional_staff` | 17,444 | Staff from House SOD directory |
+| `congressional_districts` | 444 | District boundaries (GeoJSON) |
+| `district_demographics` | 436 | Census demographics per district |
+| `zip_districts` | 42,033 | ZIP code to district mappings |
+| `metadata` | 215 | Import tracking and versioning |
+
+## Core Reference Tables
+
+### states
+
+```sql
+CREATE TABLE states (
+    code TEXT PRIMARY KEY,              -- Two-letter code (e.g., "TX")
+    name TEXT NOT NULL UNIQUE,
+    fips_code TEXT,
+    is_territory INTEGER DEFAULT 0,
+    region TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### metadata
+
+```sql
+CREATE TABLE metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+## Congress Members
+
+### congress_members
+
+Current members of the 119th Congress (537 members).
 
 ```sql
 CREATE TABLE congress_members (
-    id TEXT PRIMARY KEY,              -- Bioguide ID (e.g., "B000944")
+    id TEXT PRIMARY KEY,                -- Bioguide ID (e.g., "P000197")
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     full_name TEXT NOT NULL,
@@ -32,165 +89,318 @@ CREATE TABLE congress_members (
     middle_name TEXT,
     suffix TEXT,
 
-    -- Current position
-    chamber TEXT NOT NULL,            -- 'House' or 'Senate'
-    state_code TEXT NOT NULL,         -- Two-letter state code
+    chamber TEXT NOT NULL,              -- 'House' or 'Senate'
+    state_code TEXT,
     state_name TEXT NOT NULL,
-    district TEXT,                    -- For House members (NULL for Senators)
+    district TEXT,                      -- NULL for Senators
 
-    -- Political affiliation
-    current_party TEXT NOT NULL,      -- 'Democratic', 'Republican', 'Independent'
+    current_party TEXT NOT NULL,        -- 'Democratic', 'Republican', 'Independent'
 
-    -- Contact information
     office_address TEXT,
     phone TEXT,
     website_url TEXT,
     contact_form_url TEXT,
 
-    -- Social media
     twitter_handle TEXT,
     facebook_url TEXT,
     youtube_url TEXT,
 
-    -- Additional info
     birth_year INTEGER,
     gender TEXT,
+    birthday TEXT,
 
-    -- Term information
-    term_start_date TEXT,             -- ISO 8601 date
-    term_end_date TEXT,               -- ISO 8601 date
+    term_start_date TEXT,
+    term_end_date TEXT,
 
-    -- Service history (from Congress.gov API)
-    first_elected_year INTEGER,       -- Year first elected to Congress
-    total_years_served INTEGER,       -- Total years in Congress
-    total_terms_served INTEGER,       -- Total number of terms served
-    current_leadership_role TEXT,     -- Current leadership position (e.g., "Speaker of the House")
+    image_url TEXT,
+    image_blob BLOB,
+    first_elected_year INTEGER,
+    total_years_served INTEGER,
+    total_terms_served INTEGER,
+    current_leadership_role TEXT,
+    sponsored_bills_count INTEGER,
+    cosponsored_bills_count INTEGER,
+    depiction_url TEXT,
+    depiction_attribution TEXT,
 
-    -- Legislative activity (from Congress.gov API)
-    sponsored_bills_count INTEGER,    -- Total bills/resolutions sponsored
-    cosponsored_bills_count INTEGER,  -- Total bills/resolutions cosponsored
+    -- Cross-reference IDs
+    wikipedia_id TEXT,
+    govtrack_id TEXT,
+    opensecrets_id TEXT,
+    votesmart_id TEXT,
+    fec_id TEXT,
+    ballotpedia_id TEXT,
+    cspan_id TEXT,
 
-    -- Official portrait (from Congress.gov API)
-    depiction_url TEXT,               -- URL to official portrait image
-    depiction_attribution TEXT,       -- Image attribution/credit
-
-    -- Metadata
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY (state_code) REFERENCES states(code)
 );
-
-CREATE INDEX idx_members_chamber ON congress_members(chamber);
-CREATE INDEX idx_members_state ON congress_members(state_code);
-CREATE INDEX idx_members_party ON congress_members(current_party);
-CREATE INDEX idx_members_district ON congress_members(state_code, district);
 ```
 
-### 2. congress_members_fts
-
-Full-text search index for Congress members.
+### congress_members_fts
 
 ```sql
 CREATE VIRTUAL TABLE congress_members_fts USING fts5(
-    member_id,
-    full_name,
-    first_name,
-    last_name,
-    state_name,
-    content=congress_members,
-    content_rowid=rowid
+    member_id UNINDEXED, full_name, first_name, last_name, state_name
 );
 ```
 
-### 3. states
+## Legislation
 
-US states and territories reference data.
+### legislation
 
 ```sql
-CREATE TABLE states (
-    code TEXT PRIMARY KEY,            -- Two-letter state code
-    name TEXT NOT NULL UNIQUE,
-    fips_code TEXT,                   -- Federal Information Processing Standards code
-    is_territory INTEGER DEFAULT 0,   -- 0 for states, 1 for territories
-
-    -- Geographic info
-    region TEXT,                      -- Northeast, South, Midwest, West, Territory
-    population INTEGER,
-
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_states_region ON states(region);
-```
-
-### 4. congressional_districts
-
-Geographic boundary data for all 444 congressional districts.
-
-**Note**: Due to the large size of GeoJSON data (276 MB), we have two options:
-
-**Option A**: Store simplified district metadata only (recommended for mobile):
-```sql
-CREATE TABLE congressional_districts (
-    district_id TEXT PRIMARY KEY,     -- Format: "STATE_CODE-DISTRICT_NUM" (e.g., "CA-01")
-    state_code TEXT NOT NULL,
-    district_number TEXT NOT NULL,
-    fips_code TEXT,
-
-    -- Current representative
-    current_member_id TEXT,
-
-    -- Simplified geography (centroid for mapping)
-    centroid_latitude REAL,
-    centroid_longitude REAL,
-
-    -- Bounding box for quick map filtering
-    bbox_min_lat REAL,
-    bbox_min_lon REAL,
-    bbox_max_lat REAL,
-    bbox_max_lon REAL,
-
+CREATE TABLE legislation (
+    id TEXT PRIMARY KEY,                -- e.g., "119-hr-1234"
+    congress INTEGER NOT NULL,
+    bill_type TEXT NOT NULL,
+    bill_number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    origin_chamber TEXT,
+    origin_chamber_code TEXT,
+    introduced_date TEXT,
+    latest_action_date TEXT,
+    latest_action_text TEXT,
+    policy_area TEXT,
+    is_law INTEGER DEFAULT 0,
+    law_number TEXT,
+    law_type TEXT,
+    status TEXT,
+    actions_count INTEGER DEFAULT 0,
+    amendments_count INTEGER DEFAULT 0,
+    cosponsors_count INTEGER DEFAULT 0,
+    subjects_count INTEGER DEFAULT 0,
+    summaries_count INTEGER DEFAULT 0,
+    legislation_url TEXT,
+    session INTEGER,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (state_code) REFERENCES states(code),
-    FOREIGN KEY (current_member_id) REFERENCES congress_members(id)
+    UNIQUE(congress, bill_type, bill_number)
 );
 ```
 
-**Option B**: Store full GeoJSON (for desktop/server use):
+### legislation_sponsors
+
+Stores both primary sponsors (`is_primary_sponsor = 1`) and cosponsors.
+
 ```sql
--- Add column to store full GeoJSON geometry
-ALTER TABLE congressional_districts ADD COLUMN geojson TEXT;
+CREATE TABLE legislation_sponsors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    legislation_id TEXT NOT NULL,
+    bioguide_id TEXT,
+    full_name TEXT NOT NULL,
+    first_name TEXT,
+    last_name TEXT,
+    middle_name TEXT,
+    party TEXT,
+    state TEXT,
+    district INTEGER,
+    is_original_cosponsor INTEGER DEFAULT 0,
+    sponsorship_date TEXT,
+    is_primary_sponsor INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (legislation_id) REFERENCES legislation(id),
+    FOREIGN KEY (bioguide_id) REFERENCES congress_members(id),
+    UNIQUE(legislation_id, bioguide_id)
+);
 ```
 
-For CivicScope mobile app, we recommend **Option A** with GeoJSON served from a separate API/CDN when needed for detailed mapping.
+### legislation_summaries, legislation_subjects, legislation_actions, legislation_related
 
-### 5. candidates
+Child tables of `legislation` for summaries, subject tags, actions, and related bills.
 
-FEC candidate records with composite primary key (candidate_id + election_cycle). Populated by `scripts/import_fec_candidates.py` from both Candidate-Master (biographical) and All-Candidates (financial) FEC bulk files.
+## Roll-Call Votes
+
+### roll_call_votes
+
+```sql
+CREATE TABLE roll_call_votes (
+    id TEXT PRIMARY KEY,
+    congress INTEGER NOT NULL,
+    chamber TEXT NOT NULL,
+    session INTEGER NOT NULL,
+    roll_number INTEGER NOT NULL,
+    vote_date TEXT NOT NULL,
+    vote_time TEXT,
+    vote_question TEXT,
+    vote_question_text TEXT,
+    vote_type TEXT,
+    vote_result TEXT,
+    vote_result_text TEXT,
+    yea_count INTEGER DEFAULT 0,
+    nay_count INTEGER DEFAULT 0,
+    present_count INTEGER DEFAULT 0,
+    not_voting_count INTEGER DEFAULT 0,
+    required_majority TEXT,
+    legislation_id TEXT,
+    amendment_number TEXT,
+    source_url TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(congress, chamber, session, roll_number),
+    FOREIGN KEY (legislation_id) REFERENCES legislation(id)
+);
+```
+
+### member_votes
+
+```sql
+CREATE TABLE member_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    roll_call_id TEXT NOT NULL,
+    bioguide_id TEXT NOT NULL,
+    vote_position TEXT NOT NULL,
+    member_name TEXT,
+    party TEXT,
+    state TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(roll_call_id, bioguide_id),
+    FOREIGN KEY (roll_call_id) REFERENCES roll_call_votes(id),
+    FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
+);
+```
+
+## Congressional Committees & Staff
+
+### congressional_committees
+
+```sql
+CREATE TABLE congressional_committees (
+    id TEXT PRIMARY KEY,                -- e.g., "HSJU" for House Judiciary
+    name TEXT NOT NULL,
+    chamber TEXT NOT NULL,              -- 'House', 'Senate', or 'Joint'
+    committee_type TEXT,
+    parent_committee_id TEXT,
+    jurisdiction TEXT,
+    url TEXT,
+    is_subcommittee INTEGER DEFAULT 0,
+    congress INTEGER DEFAULT 119,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### member_committee_assignments
+
+```sql
+CREATE TABLE member_committee_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id TEXT NOT NULL,
+    committee_id TEXT NOT NULL,
+    party_side TEXT,
+    rank INTEGER,
+    title TEXT,
+    is_subcommittee INTEGER DEFAULT 0,
+    congress INTEGER DEFAULT 119,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES congress_members(id),
+    UNIQUE(member_id, committee_id, congress)
+);
+```
+
+### congressional_staff
+
+Imported from the House Statement of Disbursements (SOD).
+
+```sql
+CREATE TABLE congressional_staff (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_name TEXT,
+    last_name TEXT,
+    full_name TEXT NOT NULL,
+    suffix TEXT,
+    title TEXT NOT NULL,
+    title_normalized TEXT,
+    office_type TEXT NOT NULL,          -- 'member', 'committee', 'institutional'
+    chamber TEXT,
+    member_bioguide_id TEXT,
+    member_name TEXT,
+    office_location TEXT,
+    committee_code TEXT,
+    committee_name TEXT,
+    subcommittee_name TEXT,
+    party_affiliation TEXT,
+    institutional_office TEXT,
+    congress_number INTEGER NOT NULL,
+    source_document TEXT,
+    source_section TEXT,
+    effective_date TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    is_current INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (member_bioguide_id) REFERENCES congress_members(id)
+);
+```
+
+### member_positions
+
+Career history and leadership positions.
+
+```sql
+CREATE TABLE member_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id TEXT NOT NULL,
+    position_title TEXT NOT NULL,
+    position_type TEXT,
+    organization TEXT,
+    district TEXT,
+    state TEXT,
+    start_year INTEGER,
+    end_year INTEGER,
+    is_current INTEGER DEFAULT 0,
+    source TEXT,
+    wikidata_position_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES congress_members(id)
+);
+```
+
+## FEC Campaign Finance
+
+### committees (FEC)
+
+All active and historical FEC political committees and PACs.
+
+```sql
+CREATE TABLE committees (
+    committee_id TEXT PRIMARY KEY,
+    committee_name TEXT NOT NULL,
+    committee_type TEXT,
+    committee_type_full TEXT,
+    committee_designation TEXT,
+    committee_designation_full TEXT,
+    party_code TEXT,
+    party_full_name TEXT,
+    total_receipts REAL,
+    total_disbursements REAL,
+    cash_on_hand REAL,
+    coverage_end_date TEXT,
+    connected_org_name TEXT,
+    treasurer_name TEXT,
+    street_1 TEXT, street_2 TEXT, city TEXT, state TEXT, zip TEXT,
+    filing_frequency TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### candidates
+
+FEC candidate records with composite primary key.
 
 ```sql
 CREATE TABLE candidates (
-    candidate_id TEXT NOT NULL,           -- FEC candidate ID (e.g., "H0CA12345")
-    election_cycle INTEGER NOT NULL,      -- Even-year cycle (2024, 2026, etc.)
+    candidate_id TEXT NOT NULL,           -- e.g., "H0CA12345"
+    election_cycle INTEGER NOT NULL,      -- Even-year cycle
     candidate_name TEXT NOT NULL,         -- FEC format: "LAST, FIRST MIDDLE"
-
-    -- Office info (from Candidate-Master field 5)
-    office TEXT,                          -- 'H' (House), 'S' (Senate), 'P' (President)
-    office_state TEXT,                    -- Two-letter state code
-    office_district TEXT,                 -- District number or '00'
-
-    -- Party and status
-    party_code TEXT,                      -- 'DEM', 'REP', 'LIB', 'IND', etc.
-    incumbent_challenger_status TEXT,     -- 'I' (incumbent), 'C' (challenger), 'O' (open seat)
-    candidate_status TEXT,               -- 'C' (candidate), 'F' (future), 'N' (not yet), 'P' (prior)
-
-    -- Election year from Candidate-Master
+    office TEXT,                          -- 'H', 'S', 'P'
+    office_state TEXT,
+    office_district TEXT,
+    party_code TEXT,
+    incumbent_challenger_status TEXT,     -- 'I', 'C', 'O'
+    candidate_status TEXT,               -- 'C', 'F', 'N', 'P'
     election_year INTEGER,
-
-    -- Financial summary (from All-Candidates overlay)
     total_receipts REAL,
     total_disbursements REAL,
     cash_on_hand REAL,
@@ -201,57 +411,40 @@ CREATE TABLE candidates (
     party_contributions REAL,
     debts_owed REAL,
     coverage_end_date TEXT,
-
-    -- Principal campaign committee
     principal_committee_id TEXT,
-
-    -- Address
-    mailing_city TEXT,
-    mailing_state TEXT,
-    mailing_zip TEXT,
-
+    mailing_city TEXT, mailing_state TEXT, mailing_zip TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
     PRIMARY KEY (candidate_id, election_cycle)
 );
-
-CREATE INDEX idx_candidates_office ON candidates(office);
-CREATE INDEX idx_candidates_state ON candidates(office_state);
-CREATE INDEX idx_candidates_party ON candidates(party_code);
-CREATE INDEX idx_candidates_cycle ON candidates(election_cycle);
-CREATE INDEX idx_candidates_cycle_office ON candidates(election_cycle, office, office_state);
 ```
 
-### 5b. election_races
+### election_races
 
-Election race matchups derived from candidates table. Each race groups all candidates running for the same office/state/district in a cycle. Incumbent linkage via `congress_members.fec_id`.
+Derived race matchups grouping candidates by office/state/district per cycle.
 
 ```sql
 CREATE TABLE election_races (
-    race_id TEXT PRIMARY KEY,             -- e.g., "2026-H-CA-12", "2026-S-AZ"
+    race_id TEXT PRIMARY KEY,             -- e.g., "2026-H-CA-12"
     election_cycle INTEGER NOT NULL,
-    office TEXT NOT NULL,                 -- H, S, P
+    office TEXT NOT NULL,
     state TEXT NOT NULL,
-    district TEXT,                        -- NULL for Senate/President
-    incumbent_bioguide_id TEXT,           -- FK to congress_members.id
+    district TEXT,
+    incumbent_bioguide_id TEXT,
     incumbent_fec_id TEXT,
     incumbent_party TEXT,
     total_candidates INTEGER DEFAULT 0,
     challenger_count INTEGER DEFAULT 0,
-    open_seat INTEGER DEFAULT 0,          -- 1 if no incumbent running
-    rating TEXT,                          -- solid_d, likely_d, lean_d, tossup, lean_r, likely_r, solid_r
-    rating_source TEXT,                   -- 'fivethirtyeight', 'cook', etc.
+    open_seat INTEGER DEFAULT 0,
+    rating TEXT,                          -- solid_d, lean_r, tossup, etc.
+    rating_source TEXT,
     rating_date TEXT,
     FOREIGN KEY (incumbent_bioguide_id) REFERENCES congress_members(id)
 );
-
-CREATE INDEX idx_races_cycle ON election_races(election_cycle);
-CREATE INDEX idx_races_incumbent ON election_races(incumbent_bioguide_id);
 ```
 
-### 5c. race_candidates
+### race_candidates
 
-Denormalized join table for fast app queries. Contains key candidate fields needed for race display without joining back to the candidates table.
+Denormalized join for fast app display without joining back to `candidates`.
 
 ```sql
 CREATE TABLE race_candidates (
@@ -264,504 +457,32 @@ CREATE TABLE race_candidates (
     total_receipts REAL,
     cash_on_hand REAL,
     total_individual_contributions REAL,
+    principal_committee_id TEXT,
+    image_url TEXT,
+    image_blob BLOB,
     PRIMARY KEY (race_id, candidate_id),
     FOREIGN KEY (race_id) REFERENCES election_races(race_id)
 );
-
-CREATE INDEX idx_race_cand_race ON race_candidates(race_id);
 ```
 
-### 6. candidates_fts
-
-Full-text search index for candidates.
-
-```sql
-CREATE VIRTUAL TABLE candidates_fts USING fts5(
-    candidate_id UNINDEXED,
-    election_cycle UNINDEXED,
-    candidate_name,
-    office_state,
-    party_code
-);
-```
-
-### 7. committees
-
-Political committees and PACs.
-
-```sql
-CREATE TABLE committees (
-    committee_id TEXT PRIMARY KEY,    -- FEC committee ID
-    committee_name TEXT NOT NULL,
-    committee_type TEXT,              -- 'H', 'S', 'P', 'N', 'Q', 'O', etc.
-    committee_type_full TEXT,
-
-    -- Designation
-    committee_designation TEXT,       -- 'P' (Principal), 'A' (Authorized), 'J' (Joint), etc.
-    committee_designation_full TEXT,
-
-    -- Party affiliation
-    party_code TEXT,
-    party_full_name TEXT,
-
-    -- Financial summary
-    total_receipts REAL,
-    total_disbursements REAL,
-    cash_on_hand REAL,
-    coverage_end_date TEXT,
-
-    -- Connected organization
-    connected_org_name TEXT,
-
-    -- Treasurer
-    treasurer_name TEXT,
-
-    -- Address
-    street_1 TEXT,
-    street_2 TEXT,
-    city TEXT,
-    state TEXT,
-    zip TEXT,
-
-    -- Filing info
-    filing_frequency TEXT,
-
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_committees_type ON committees(committee_type);
-CREATE INDEX idx_committees_party ON committees(party_code);
-CREATE INDEX idx_committees_state ON committees(state);
-```
-
-### 8. committees_fts
-
-Full-text search index for committees.
-
-```sql
-CREATE VIRTUAL TABLE committees_fts USING fts5(
-    committee_id,
-    committee_name,
-    connected_org_name,
-    party_full_name,
-    content=committees,
-    content_rowid=rowid
-);
-```
-
-### 9. candidate_committee_linkages
-
-Relationships between candidates and their associated committees.
+### candidate_committee_linkages
 
 ```sql
 CREATE TABLE candidate_committee_linkages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     candidate_id TEXT NOT NULL,
     committee_id TEXT NOT NULL,
-    linkage_type TEXT,                -- 'P' (Principal), 'A' (Authorized), etc.
+    linkage_type TEXT,
     election_year INTEGER,
-
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id),
     FOREIGN KEY (committee_id) REFERENCES committees(committee_id),
-
     UNIQUE(candidate_id, committee_id, election_year)
 );
-
-CREATE INDEX idx_linkages_candidate ON candidate_committee_linkages(candidate_id);
-CREATE INDEX idx_linkages_committee ON candidate_committee_linkages(committee_id);
 ```
 
-### 10. contributions
+### member_fec_summary
 
-Campaign contributions from committees (sampled data for mobile).
-
-**Note**: Full contributions data is massive. We store aggregated/sampled data for mobile.
-
-```sql
-CREATE TABLE contributions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-    -- Contributor
-    committee_id TEXT NOT NULL,       -- Contributor committee
-
-    -- Recipient
-    recipient_candidate_id TEXT,
-    recipient_committee_id TEXT,
-
-    -- Transaction details
-    transaction_date TEXT,            -- ISO 8601 date
-    transaction_amount REAL NOT NULL,
-    transaction_type TEXT,
-
-    -- Additional context
-    entity_type TEXT,                 -- 'IND', 'ORG', 'PAC', 'CCM'
-    city TEXT,
-    state TEXT,
-    employer TEXT,
-    occupation TEXT,
-
-    -- Memo
-    memo_text TEXT,
-
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (committee_id) REFERENCES committees(committee_id),
-    FOREIGN KEY (recipient_candidate_id) REFERENCES candidates(candidate_id),
-    FOREIGN KEY (recipient_committee_id) REFERENCES committees(committee_id)
-);
-
-CREATE INDEX idx_contributions_committee ON contributions(committee_id);
-CREATE INDEX idx_contributions_recipient_candidate ON contributions(recipient_candidate_id);
-CREATE INDEX idx_contributions_date ON contributions(transaction_date);
-CREATE INDEX idx_contributions_amount ON contributions(transaction_amount);
-```
-
-### 11. metadata
-
-Database versioning and statistics.
-
-```sql
-CREATE TABLE metadata (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
--- Initial metadata
-INSERT INTO metadata (key, value) VALUES
-    ('schema_version', '1.0.0'),
-    ('database_created', datetime('now')),
-    ('data_source', 'CivicScope v1.0'),
-    ('congress_session', '119'),
-    ('fec_data_range', '1979-2026');
-```
-
-## Database Statistics (Current)
-
-| Table | Rows | Purpose |
-|-------|------|---------|
-| congress_members | 537 | Current Congress with full metadata |
-| legislation | 10,798 | Bills from 119th Congress |
-| legislation_summaries | ~10,000 | Bill summaries and analysis |
-| legislation_sponsors | 114,164 | Bill sponsorship records (10,789 primary + 103,375 cosponsors) |
-| legislation_subjects | ~50,000 | Bill subject tags |
-| states | 56 | US states + territories |
-| congressional_districts | 444 | District metadata |
-| candidates | ~50,000+ | All FEC candidates (1979-2026) |
-| committees | ~20,000+ | All active/historical FEC committees |
-| candidate_committee_linkages | ~100,000+ | Candidate-committee relationships |
-| contributions | ~1,000,000+ | Sampled contribution records |
-| congressional_committees | ~250+ | Congressional committees and subcommittees |
-| member_committee_assignments | ~2,000+ | Member committee assignments |
-| member_fec_summary | ~1,074 | FEC financial summary per member per cycle |
-| member_top_contributors | ~10,740 | Top 10 contributors per member per cycle |
-
-**Current Database Size**: 164 MB (with legislation summaries, without full legislative actions)
-
-**Note**: Legislative actions for each bill are available via Congress.gov API on-demand to reduce database size.
-
-## Query Examples
-
-### Find your representative by location
-
-```sql
--- Find district by state and district number
-SELECT m.*
-FROM congress_members m
-WHERE m.state_code = 'CA'
-  AND m.district = '12'
-  AND m.chamber = 'House';
-```
-
-### Search members by name
-
-```sql
--- Full-text search for members
-SELECT m.*
-FROM congress_members m
-JOIN congress_members_fts fts ON m.id = fts.member_id
-WHERE congress_members_fts MATCH 'pelosi';
-```
-
-### Find candidate's campaign finances
-
-```sql
--- Get candidate with their principal committee
-SELECT
-    c.candidate_name,
-    c.election_year,
-    c.total_receipts,
-    c.total_disbursements,
-    c.cash_on_hand,
-    cm.committee_name
-FROM candidates c
-LEFT JOIN committees cm ON c.principal_committee_id = cm.committee_id
-WHERE c.candidate_name LIKE '%Biden%'
-  AND c.election_year = 2020;
-```
-
-### Top contributors to a candidate
-
-```sql
--- Aggregate contributions by committee
-SELECT
-    cm.committee_name,
-    cm.party_full_name,
-    SUM(contrib.transaction_amount) as total_contributed,
-    COUNT(*) as num_contributions
-FROM contributions contrib
-JOIN committees cm ON contrib.committee_id = cm.committee_id
-JOIN candidates cand ON contrib.recipient_candidate_id = cand.candidate_id
-WHERE cand.candidate_name LIKE '%Harris%'
-  AND cand.election_year = 2024
-GROUP BY cm.committee_id
-ORDER BY total_contributed DESC
-LIMIT 20;
-```
-
-### Members by party and chamber
-
-```sql
--- Count members by party and chamber
-SELECT
-    chamber,
-    current_party,
-    COUNT(*) as count
-FROM congress_members
-GROUP BY chamber, current_party
-ORDER BY chamber, count DESC;
-```
-
-### Most senior members of Congress
-
-```sql
--- Find longest-serving members
-SELECT
-    full_name,
-    chamber,
-    state_code,
-    first_elected_year,
-    total_years_served,
-    total_terms_served,
-    current_leadership_role
-FROM congress_members
-WHERE total_years_served IS NOT NULL
-ORDER BY total_years_served DESC
-LIMIT 10;
-```
-
-### Congressional leadership roster
-
-```sql
--- Get all current congressional leaders
-SELECT
-    full_name,
-    chamber,
-    current_party,
-    current_leadership_role
-FROM congress_members
-WHERE current_leadership_role IS NOT NULL
-ORDER BY chamber, current_party;
-```
-
-### Most active legislators
-
-```sql
--- Members with most sponsored legislation
-SELECT
-    full_name,
-    chamber,
-    state_code,
-    sponsored_bills_count,
-    cosponsored_bills_count,
-    (sponsored_bills_count + cosponsored_bills_count) as total_legislative_activity
-FROM congress_members
-WHERE sponsored_bills_count IS NOT NULL
-ORDER BY total_legislative_activity DESC
-LIMIT 20;
-```
-
-### Bill sponsors and cosponsors
-
-```sql
--- Get primary sponsor and all cosponsors for a bill
-SELECT
-    l.id,
-    l.title,
-    ls.full_name,
-    ls.party,
-    ls.state,
-    CASE
-        WHEN ls.is_primary_sponsor = 1 THEN 'Primary Sponsor'
-        ELSE 'Cosponsor'
-    END as sponsor_type,
-    ls.sponsorship_date
-FROM legislation l
-JOIN legislation_sponsors ls ON l.id = ls.legislation_id
-WHERE l.id = '119-hr-5815'
-ORDER BY ls.is_primary_sponsor DESC, ls.sponsorship_date;
-
--- Get only the primary sponsor of a bill
-SELECT
-    l.id,
-    l.title,
-    ls.full_name as primary_sponsor,
-    ls.party,
-    ls.state
-FROM legislation l
-JOIN legislation_sponsors ls ON l.id = ls.legislation_id AND ls.is_primary_sponsor = 1
-WHERE l.id = '119-hr-5815';
-
--- Find bills sponsored by a specific member
-SELECT
-    l.id,
-    l.title,
-    l.introduced_date,
-    COUNT(cs.id) as cosponsor_count
-FROM legislation l
-JOIN legislation_sponsors ls ON l.id = ls.legislation_id AND ls.is_primary_sponsor = 1
-LEFT JOIN legislation_sponsors cs ON l.id = cs.legislation_id AND cs.is_primary_sponsor = 0
-WHERE ls.bioguide_id = 'B000944'  -- Example: Sherrod Brown
-GROUP BY l.id
-ORDER BY l.introduced_date DESC
-LIMIT 10;
-```
-
-### Committee assignments
-
-```sql
--- Get all committee assignments for a member
-SELECT
-    m.full_name,
-    c.name as committee_name,
-    c.chamber,
-    a.title,
-    a.rank,
-    CASE WHEN a.is_subcommittee = 1 THEN 'Subcommittee' ELSE 'Committee' END as type
-FROM member_committee_assignments a
-JOIN congress_members m ON a.member_id = m.id
-JOIN congressional_committees c ON a.committee_id = c.id
-WHERE m.id = 'P000197'  -- Example: Nancy Pelosi
-ORDER BY a.is_subcommittee, c.name;
-
--- Get all members of a specific committee
-SELECT
-    m.full_name,
-    m.current_party,
-    m.state_code,
-    a.title,
-    a.rank
-FROM member_committee_assignments a
-JOIN congress_members m ON a.member_id = m.id
-WHERE a.committee_id = 'HSJU'  -- House Judiciary
-  AND a.is_subcommittee = 0
-ORDER BY a.rank;
-
--- Get committee chairs and ranking members
-SELECT
-    c.name as committee_name,
-    c.chamber,
-    m.full_name,
-    m.current_party,
-    a.title
-FROM member_committee_assignments a
-JOIN congressional_committees c ON a.committee_id = c.id
-JOIN congress_members m ON a.member_id = m.id
-WHERE a.title IN ('Chair', 'Chairman', 'Chairwoman', 'Ranking Member')
-  AND c.is_subcommittee = 0
-ORDER BY c.chamber, c.name;
-
--- Count committees per member
-SELECT
-    m.full_name,
-    m.current_party,
-    COUNT(DISTINCT CASE WHEN a.is_subcommittee = 0 THEN a.committee_id END) as committee_count,
-    COUNT(DISTINCT CASE WHEN a.is_subcommittee = 1 THEN a.committee_id END) as subcommittee_count
-FROM congress_members m
-JOIN member_committee_assignments a ON m.id = a.member_id
-GROUP BY m.id
-ORDER BY committee_count DESC
-LIMIT 20;
-```
-
-## Performance Considerations
-
-1. **Indexes**: All foreign keys and frequently queried columns are indexed
-2. **FTS5**: Full-text search provides sub-second query times
-3. **Partial Data**: Mobile database contains sampled/aggregated data, not complete archive
-4. **GeoJSON**: Store simplified geographic data; serve full GeoJSON from API when needed
-5. **Contributions**: Consider time-based sampling (e.g., recent 5 years + major donations)
-
-## iOS Integration
-
-The database is designed to work seamlessly with SwiftData and CoreData:
-
-```swift
-// Example: Query members using raw SQL
-let db = try Connection("civic_cache.db")
-let members = try db.prepare("SELECT * FROM congress_members WHERE state_code = ?")
-
-// Or use SwiftData models that mirror the schema
-@Model
-class CongressMember {
-    @Attribute(.unique) var id: String
-    var firstName: String
-    var lastName: String
-    // ... other properties
-}
-```
-
-### 12. congressional_committees
-
-Congressional committee definitions (standing, select, joint, and subcommittees).
-
-```sql
-CREATE TABLE congressional_committees (
-    id TEXT PRIMARY KEY,              -- Committee ID (e.g., "HSAG" for House Agriculture)
-    name TEXT NOT NULL,               -- Full committee name
-    chamber TEXT NOT NULL,            -- 'House', 'Senate', or 'Joint'
-    committee_type TEXT,              -- 'house', 'senate', 'joint', 'subcommittee'
-    parent_committee_id TEXT,         -- For subcommittees, references parent committee
-    jurisdiction TEXT,                -- Committee jurisdiction description
-    url TEXT,                         -- Official committee website
-    is_subcommittee INTEGER DEFAULT 0,-- 1 if subcommittee, 0 if main committee
-    congress INTEGER DEFAULT 119,     -- Congress number
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_committees_chamber ON congressional_committees(chamber);
-CREATE INDEX idx_committees_parent ON congressional_committees(parent_committee_id);
-```
-
-### 13. member_committee_assignments
-
-Tracks which members serve on which committees.
-
-```sql
-CREATE TABLE member_committee_assignments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id TEXT NOT NULL,          -- Bioguide ID of the member
-    committee_id TEXT NOT NULL,       -- Committee ID
-    party_side TEXT,                  -- 'majority' or 'minority'
-    rank INTEGER,                     -- Rank/seniority on the committee
-    title TEXT,                       -- Role (e.g., "Chair", "Ranking Member")
-    is_subcommittee INTEGER DEFAULT 0,-- 1 if subcommittee assignment
-    congress INTEGER DEFAULT 119,     -- Congress number
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (member_id) REFERENCES congress_members(id),
-    UNIQUE(member_id, committee_id, congress)
-);
-
-CREATE INDEX idx_assignments_member ON member_committee_assignments(member_id);
-CREATE INDEX idx_assignments_committee ON member_committee_assignments(committee_id);
-```
-
-### 14. member_fec_summary
-
-FEC financial summary data per member per election cycle. Pre-computed from All-Candidates files with denormalized top contributor for card display.
+Pre-computed financial summary per sitting member per cycle.
 
 ```sql
 CREATE TABLE member_fec_summary (
@@ -780,20 +501,18 @@ CREATE TABLE member_fec_summary (
     pct_pac REAL DEFAULT 0,
     pct_self_funded REAL DEFAULT 0,
     top_contributor_name TEXT,
-    top_contributor_type TEXT,       -- 'employer', 'pac', 'party'
+    top_contributor_type TEXT,
     top_contributor_amount REAL DEFAULT 0,
     coverage_end_date TEXT,
     import_date TEXT DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (bioguide_id, election_cycle),
     FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
 );
-
-CREATE INDEX idx_fec_summary_cycle ON member_fec_summary(election_cycle);
 ```
 
-### 15. member_top_contributors
+### member_top_contributors
 
-Top 10 contributors per member per cycle (PACs and employer-aggregated individuals ranked together).
+Top 10 contributors per sitting member per cycle (PACs and employer-aggregated individuals).
 
 ```sql
 CREATE TABLE member_top_contributors (
@@ -802,33 +521,198 @@ CREATE TABLE member_top_contributors (
     election_cycle INTEGER NOT NULL,
     rank INTEGER NOT NULL,
     contributor_name TEXT NOT NULL,
-    contributor_type TEXT NOT NULL,  -- 'employer', 'pac', 'party', 'self'
+    contributor_type TEXT NOT NULL,      -- 'employer', 'pac'
     total_amount REAL NOT NULL,
     transaction_count INTEGER DEFAULT 0,
     UNIQUE(bioguide_id, election_cycle, rank),
     FOREIGN KEY (bioguide_id) REFERENCES congress_members(id)
 );
-
-CREATE INDEX idx_top_contrib_member ON member_top_contributors(bioguide_id, election_cycle);
 ```
 
-## Future Enhancements
+### candidate_top_contributors
 
-1. **Voting Records**: Add tables for roll call votes
-2. **Historical Data**: Archive previous Congress sessions
-3. **Real-time Updates**: Incremental sync from Congress.gov and OpenFEC APIs
+Top 10 PAC/committee contributors per FEC candidate per cycle. Covers challengers and all candidates, not just sitting members.
+
+```sql
+CREATE TABLE candidate_top_contributors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id TEXT NOT NULL,
+    election_cycle INTEGER NOT NULL,
+    rank INTEGER NOT NULL,
+    committee_id TEXT NOT NULL,
+    committee_name TEXT NOT NULL,
+    committee_type TEXT,
+    total_amount REAL NOT NULL,
+    transaction_count INTEGER DEFAULT 0,
+    UNIQUE(candidate_id, election_cycle, rank),
+    FOREIGN KEY (candidate_id, election_cycle)
+        REFERENCES candidates(candidate_id, election_cycle)
+);
+```
+
+## Geographic Tables
+
+### congressional_districts
+
+All 444 districts with full GeoJSON boundaries and bounding boxes.
+
+```sql
+CREATE TABLE congressional_districts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    state_fips TEXT NOT NULL,
+    state_code TEXT,
+    district_code TEXT NOT NULL,
+    district_number INTEGER,
+    name TEXT NOT NULL,
+    geoid TEXT UNIQUE NOT NULL,
+    center_latitude REAL,
+    center_longitude REAL,
+    population INTEGER,
+    geojson TEXT NOT NULL,              -- Standard GeoJSON Feature
+    bbox TEXT NOT NULL,                 -- Bounding box for spatial queries
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (state_code) REFERENCES states(code)
+);
+```
+
+### district_demographics
+
+Census ACS 5-Year Estimates per district.
+
+```sql
+CREATE TABLE district_demographics (
+    geoid TEXT PRIMARY KEY,
+    population INTEGER,
+    median_household_income REAL,
+    poverty_rate REAL,
+    unemployment_rate REAL,
+    median_age REAL,
+    college_educated_pct REAL,
+    high_school_grad_pct REAL,
+    white_pct REAL,
+    black_pct REAL,
+    hispanic_pct REAL,
+    asian_pct REAL,
+    median_home_value REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (geoid) REFERENCES congressional_districts(geoid)
+);
+```
+
+### zip_districts
+
+ZIP code to congressional district mappings.
+
+```sql
+CREATE TABLE zip_districts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zip_code TEXT NOT NULL,
+    state_fips TEXT NOT NULL,
+    state_abbr TEXT NOT NULL,
+    district INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(zip_code, state_abbr, district)
+);
+```
+
+## Full-Text Search Tables
+
+```sql
+CREATE VIRTUAL TABLE congress_members_fts USING fts5(
+    member_id UNINDEXED, full_name, first_name, last_name, state_name
+);
+
+CREATE VIRTUAL TABLE candidates_fts USING fts5(
+    candidate_id UNINDEXED, election_cycle UNINDEXED,
+    candidate_name, office_state, party_code
+);
+
+CREATE VIRTUAL TABLE committees_fts USING fts5(
+    committee_id UNINDEXED, committee_name, connected_org_name, party_full_name
+);
+
+CREATE VIRTUAL TABLE legislation_fts USING fts5(
+    id, title, content='legislation', content_rowid='rowid'
+);
+
+CREATE VIRTUAL TABLE legislation_summaries_fts USING fts5(
+    legislation_id, summary_text, content='legislation_summaries', content_rowid='id'
+);
+```
+
+## Query Examples
+
+### Find a representative by district
+
+```sql
+SELECT * FROM congress_members
+WHERE state_code = 'TX' AND district = '32' AND chamber = 'House';
+```
+
+### Full-text search for members
+
+```sql
+SELECT m.* FROM congress_members m
+JOIN congress_members_fts fts ON m.id = fts.member_id
+WHERE congress_members_fts MATCH 'pelosi';
+```
+
+### Top PAC contributors for a candidate
+
+```sql
+SELECT rank, committee_name, total_amount, transaction_count
+FROM candidate_top_contributors
+WHERE candidate_id = 'S2TX00312' AND election_cycle = 2026
+ORDER BY rank;
+```
+
+### Race matchup with candidates
+
+```sql
+SELECT rc.candidate_name, rc.party_code, rc.incumbent_challenger_status,
+       rc.total_receipts, rc.cash_on_hand
+FROM race_candidates rc
+WHERE rc.race_id = '2026-S-TX'
+ORDER BY rc.total_receipts DESC;
+```
+
+### Member voting record
+
+```sql
+SELECT rcv.vote_date, rcv.vote_question, mv.vote_position
+FROM member_votes mv
+JOIN roll_call_votes rcv ON mv.roll_call_id = rcv.id
+WHERE mv.bioguide_id = 'P000197'
+ORDER BY rcv.vote_date DESC LIMIT 20;
+```
+
+### District demographics
+
+```sql
+SELECT cd.name, cd.state_code, cd.district_number,
+       dd.population, dd.median_household_income, dd.poverty_rate
+FROM congressional_districts cd
+JOIN district_demographics dd ON cd.geoid = dd.geoid
+WHERE cd.state_code = 'CA'
+ORDER BY cd.district_number;
+```
 
 ## Data Sources
 
-- **Congressional Data**: Congress.gov API, Official Congressional Directory
-- **FEC Data**: Federal Election Commission Bulk Data API
-- **District Boundaries**: US Census Bureau TIGER/Line shapefiles (via GeoJSON)
+| Source | Tables | Update Frequency |
+|--------|--------|-----------------|
+| Congress.gov API | legislation, votes, members, contact info | Daily / Weekly |
+| GitHub `unitedstates/congress-legislators` | congress_members, committees | Weekly |
+| FEC Bulk Data | candidates, committees, linkages, races | Monthly |
+| FEC Committee Contributions | member_top_contributors, candidate_top_contributors | Monthly |
+| OpenFEC API | candidates (supplemental) | Weekly |
+| Census Bureau API | district_demographics | Annually |
+| Census TIGER/Line | congressional_districts, zip_districts | Per redistricting |
+| House SOD | congressional_staff | Monthly |
+| Wikidata SPARQL | race_candidates (photos) | Monthly |
 
-## License and Attribution
+## License
 
-Data sourced from official U.S. Government APIs:
-- Federal Election Commission (fec.gov)
-- Congress.gov
-- US Census Bureau
-
-Public domain under 17 U.S.C. § 105.
+Data sourced from official U.S. Government APIs. Public domain under 17 U.S.C. 105.

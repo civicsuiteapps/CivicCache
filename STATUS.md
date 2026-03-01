@@ -1,8 +1,14 @@
 # CivicCache Project Status
 
-**Last Updated**: February 25, 2026
+**Last Updated**: March 1, 2026
 
 ## 📅 Recent Changes
+
+### March 1, 2026
+- Reorganized documentation: Moved legacy N8N workflow files, social media implementation, and other deprecated plans to docs/archive/
+- Renamed candidate photo enrichment plan: Standardized naming convention to CANDIDATE_PHOTO_ENRICHMENT.md
+- Updated README.md with comprehensive overview: Added data pipeline diagram, coverage statistics, and current implementation status
+- Consolidated archive structure: Centralized all deprecated documentation and workflow templates in docs/archive/
 
 ### February 25, 2026
 - Added launchd plist files for macOS scheduled execution (daily, weekly, monthly)

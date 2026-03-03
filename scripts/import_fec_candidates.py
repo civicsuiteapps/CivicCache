@@ -5,9 +5,10 @@ Import FEC candidate data with correct field mapping and build election races.
 Replaces the broken import_fec_candidates() in build_database.py which had
 shifted column mappings (office contained I/C/O status codes, etc.).
 
-Four phases:
+Five phases:
   1. Parse Candidate-Master files (biographical data, 15 fields)
   2. Overlay All-Candidates files (financial data, 30 fields)
+  2.5. Deduplicate candidates (merge same-name filings under multiple FEC IDs)
   3. Build election_races from grouped candidates + congress_members linkage
   4. Populate race_candidates denormalized join table
 
@@ -310,6 +311,206 @@ def import_all_candidates(
         total += count + inserted
 
     return total
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.5: Deduplicate candidates
+# ---------------------------------------------------------------------------
+
+
+def deduplicate_candidates(
+    conn: sqlite3.Connection, cycles: set[int] | None
+) -> tuple[int, int]:
+    """Phase 2.5: Merge duplicate candidates sharing the same name/race/cycle.
+
+    The same person can file under multiple FEC candidate IDs for the same
+    race and cycle.  For each group sharing (candidate_name, office,
+    office_state, office_district, party_code, election_cycle):
+
+      1. Keep the candidate_id with the highest total_receipts (ties broken
+         by most recent coverage_end_date, then alphabetical candidate_id).
+      2. Merge financial columns into the canonical row (sums for flows,
+         max for cash_on_hand, latest coverage_end_date).
+      3. Delete the non-canonical rows.
+
+    Returns (groups_merged, rows_removed).
+    """
+    cycle_filter = ""
+    params: list = []
+    if cycles:
+        placeholders = ",".join("?" * len(cycles))
+        cycle_filter = f"AND election_cycle IN ({placeholders})"
+        params = list(cycles)
+
+    # 1. Find duplicate groups
+    dup_groups = conn.execute(
+        f"""
+        SELECT candidate_name, office, office_state, office_district,
+               party_code, election_cycle
+        FROM candidates
+        WHERE candidate_name IS NOT NULL
+              {cycle_filter}
+        GROUP BY candidate_name, office, office_state, office_district,
+                 party_code, election_cycle
+        HAVING COUNT(*) > 1
+        """,
+        params,
+    ).fetchall()
+
+    if not dup_groups:
+        print("  No duplicate candidates found.")
+        return (0, 0)
+
+    groups_merged = 0
+    rows_removed = 0
+
+    for group in dup_groups:
+        name, office, state, district, party, cycle = group
+
+        # 2. Fetch all candidates in this group, ordered for canonical pick
+        #    Handle NULLs in district comparison
+        if district is None or district == "":
+            members = conn.execute(
+                """
+                SELECT candidate_id, total_receipts, total_disbursements,
+                       cash_on_hand, total_individual_contributions,
+                       pac_contributions, party_contributions,
+                       candidate_contributions, candidate_loans,
+                       debts_owed, coverage_end_date
+                FROM candidates
+                WHERE candidate_name = ? AND office IS ? AND office_state IS ?
+                      AND (office_district IS NULL OR office_district = '')
+                      AND party_code IS ? AND election_cycle = ?
+                ORDER BY total_receipts DESC NULLS LAST,
+                         coverage_end_date DESC NULLS LAST,
+                         candidate_id ASC
+                """,
+                (name, office, state, party, cycle),
+            ).fetchall()
+        else:
+            members = conn.execute(
+                """
+                SELECT candidate_id, total_receipts, total_disbursements,
+                       cash_on_hand, total_individual_contributions,
+                       pac_contributions, party_contributions,
+                       candidate_contributions, candidate_loans,
+                       debts_owed, coverage_end_date
+                FROM candidates
+                WHERE candidate_name = ? AND office IS ? AND office_state IS ?
+                      AND office_district = ?
+                      AND party_code IS ? AND election_cycle = ?
+                ORDER BY total_receipts DESC NULLS LAST,
+                         coverage_end_date DESC NULLS LAST,
+                         candidate_id ASC
+                """,
+                (name, office, state, district, party, cycle),
+            ).fetchall()
+
+        if len(members) < 2:
+            continue  # shouldn't happen, but be safe
+
+        canonical_id = members[0][0]
+        duplicates = members[1:]
+
+        # 3. Merge financials: sum flow columns, max cash_on_hand, latest coverage_end_date
+        sum_cols = {
+            "total_receipts": 0.0,
+            "total_disbursements": 0.0,
+            "total_individual_contributions": 0.0,
+            "pac_contributions": 0.0,
+            "party_contributions": 0.0,
+            "candidate_contributions": 0.0,
+            "candidate_loans": 0.0,
+            "debts_owed": 0.0,
+        }
+        max_coh = None
+        latest_coverage = None
+
+        for member in members:
+            # Indices: 1=receipts, 2=disbursements, 3=coh, 4=indiv, 5=pac,
+            #          6=party, 7=cand_contrib, 8=cand_loans, 9=debts, 10=coverage
+            vals = {
+                "total_receipts": member[1],
+                "total_disbursements": member[2],
+                "total_individual_contributions": member[4],
+                "pac_contributions": member[5],
+                "party_contributions": member[6],
+                "candidate_contributions": member[7],
+                "candidate_loans": member[8],
+                "debts_owed": member[9],
+            }
+            for col, v in vals.items():
+                if v is not None:
+                    sum_cols[col] += v
+
+            coh = member[3]
+            if coh is not None and (max_coh is None or coh > max_coh):
+                max_coh = coh
+
+            cov = member[10]
+            if cov is not None and (latest_coverage is None or cov > latest_coverage):
+                latest_coverage = cov
+
+        # Convert zero sums back to None if all source values were None
+        for col in sum_cols:
+            idx_map = {
+                "total_receipts": 1,
+                "total_disbursements": 2,
+                "total_individual_contributions": 4,
+                "pac_contributions": 5,
+                "party_contributions": 6,
+                "candidate_contributions": 7,
+                "candidate_loans": 8,
+                "debts_owed": 9,
+            }
+            if all(m[idx_map[col]] is None for m in members):
+                sum_cols[col] = None
+
+        # 4. Update canonical row with merged financials
+        conn.execute(
+            """
+            UPDATE candidates SET
+                total_receipts = ?,
+                total_disbursements = ?,
+                cash_on_hand = ?,
+                total_individual_contributions = ?,
+                pac_contributions = ?,
+                party_contributions = ?,
+                candidate_contributions = ?,
+                candidate_loans = ?,
+                debts_owed = ?,
+                coverage_end_date = ?
+            WHERE candidate_id = ? AND election_cycle = ?
+            """,
+            (
+                sum_cols["total_receipts"],
+                sum_cols["total_disbursements"],
+                max_coh,
+                sum_cols["total_individual_contributions"],
+                sum_cols["pac_contributions"],
+                sum_cols["party_contributions"],
+                sum_cols["candidate_contributions"],
+                sum_cols["candidate_loans"],
+                sum_cols["debts_owed"],
+                latest_coverage,
+                canonical_id,
+                cycle,
+            ),
+        )
+
+        # 5. Delete duplicate rows
+        dup_ids = [d[0] for d in duplicates]
+        for dup_id in dup_ids:
+            conn.execute(
+                "DELETE FROM candidates WHERE candidate_id = ? AND election_cycle = ?",
+                (dup_id, cycle),
+            )
+
+        groups_merged += 1
+        rows_removed += len(dup_ids)
+
+    conn.commit()
+    return (groups_merged, rows_removed)
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +926,11 @@ def main() -> int:
         # Phase 2: All-Candidates (financial overlay)
         print("\n--- Phase 2: All-Candidates (financial) ---")
         ac_count = import_all_candidates(conn, cycles)
+
+        # Phase 2.5: Deduplicate candidates
+        print("\n--- Phase 2.5: Deduplicate Candidates ---")
+        groups, removed = deduplicate_candidates(conn, cycles)
+        print(f"  Merged {groups} duplicate groups, removed {removed} rows")
 
         # Phase 3: Build election races
         print("\n--- Phase 3: Election Races ---")

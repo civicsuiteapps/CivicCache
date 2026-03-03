@@ -1,8 +1,15 @@
 # CivicCache Project Status
 
-**Last Updated**: March 1, 2026
+**Last Updated**: March 2, 2026
 
 ## 📅 Recent Changes
+
+### March 2, 2026
+- Added candidate deduplication phase (Phase 2.5) to import_fec_candidates.py
+- Implements merging of duplicate candidates with same name/race/cycle under multiple FEC IDs
+- Canonical candidate selection based on highest total_receipts with tie-breaking by coverage_end_date and candidate_id
+- Financial data consolidation: Sums for flow columns, max for cash_on_hand, latest coverage_end_date
+- Integrated deduplicate_candidates() function into main FEC import pipeline
 
 ### March 1, 2026
 - Reorganized documentation: Moved legacy N8N workflow files, social media implementation, and other deprecated plans to docs/archive/

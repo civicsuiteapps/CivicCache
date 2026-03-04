@@ -23,6 +23,9 @@ from pathlib import Path
 
 from config import FEC_DIR
 
+# CivicScope only uses current election data — skip historical cycles
+MIN_ELECTION_CYCLE = 2024
+
 # ---------------------------------------------------------------------------
 # FEC bulk-data URL patterns
 #
@@ -194,6 +197,13 @@ def main() -> int:
     args = parser.parse_args()
 
     cycles = [int(c.strip()) for c in args.cycles.split(",")]
+    filtered = [c for c in cycles if c < MIN_ELECTION_CYCLE]
+    if filtered:
+        print(f"  Warning: skipping cycles before {MIN_ELECTION_CYCLE}: {filtered}")
+    cycles = [c for c in cycles if c >= MIN_ELECTION_CYCLE]
+    if not cycles:
+        print(f"  No cycles >= {MIN_ELECTION_CYCLE} to download.")
+        return 0
 
     if args.types:
         type_keys = [t.strip() for t in args.types.split(",")]

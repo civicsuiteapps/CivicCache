@@ -27,6 +27,9 @@ from pathlib import Path
 
 from config import DB_PATH, FEC_DIR
 
+# CivicScope only uses current election data — skip historical cycles
+MIN_ELECTION_CYCLE = 2024
+
 # ---------------------------------------------------------------------------
 # Cycle derivation
 # ---------------------------------------------------------------------------
@@ -83,6 +86,8 @@ def import_candidate_master(
     for fpath in sorted(cm_dir.glob("*.txt")):
         cycle = derive_cycle_from_filename(fpath.name)
         if cycles and cycle not in cycles:
+            continue
+        if cycle < MIN_ELECTION_CYCLE:
             continue
 
         count = 0
@@ -200,6 +205,8 @@ def import_all_candidates(
     for fpath in sorted(ac_dir.glob("*.txt")):
         cycle = derive_cycle_from_filename(fpath.name)
         if cycles and cycle not in cycles:
+            continue
+        if cycle < MIN_ELECTION_CYCLE:
             continue
 
         count = 0
@@ -879,7 +886,7 @@ def main() -> int:
     parser.add_argument(
         "--cycles",
         default=None,
-        help="Comma-separated election cycles (e.g. 2024,2026). Default: all available.",
+        help=f"Comma-separated election cycles (e.g. 2024,2026). Default: all >= {MIN_ELECTION_CYCLE}.",
     )
     parser.add_argument(
         "--current-only",
@@ -905,7 +912,7 @@ def main() -> int:
     print("=" * 60)
     print(f"  Database: {args.db}")
     print(f"  FEC data: {FEC_DIR}")
-    print(f"  Cycles:   {sorted(cycles) if cycles else 'all'}")
+    print(f"  Cycles:   {sorted(cycles) if cycles else f'all >= {MIN_ELECTION_CYCLE}'}")
 
     if not args.db.exists():
         print(f"\nERROR: Database not found: {args.db}")

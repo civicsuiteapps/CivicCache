@@ -12,9 +12,12 @@ This script:
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+
+sys.setrecursionlimit(50000)  # some districts have very detailed boundaries
 
 try:
     from config import DB_PATH as _CFG_DB
@@ -39,6 +42,46 @@ else:
     DISTRICT_JSON_PATH = next((p for p in _candidates if p.exists()), _candidates[0])
 
 # FIPS to state code mapping
+# --- Polygon simplification ---
+SIMPLIFY_TOLERANCE = 0.000027  # ~3m / ~10ft
+COORD_DECIMALS = 5             # ~1.1m precision
+
+
+def _perpendicular_distance(pt, line_start, line_end):
+    """Perpendicular distance from pt to the line defined by line_start-line_end."""
+    dx = line_end[0] - line_start[0]
+    dy = line_end[1] - line_start[1]
+    if dx == 0 and dy == 0:
+        return ((pt[0] - line_start[0]) ** 2 + (pt[1] - line_start[1]) ** 2) ** 0.5
+    t = ((pt[0] - line_start[0]) * dx + (pt[1] - line_start[1]) * dy) / (dx * dx + dy * dy)
+    t = max(0, min(1, t))
+    proj_x = line_start[0] + t * dx
+    proj_y = line_start[1] + t * dy
+    return ((pt[0] - proj_x) ** 2 + (pt[1] - proj_y) ** 2) ** 0.5
+
+
+def simplify_ring(coords, tolerance=SIMPLIFY_TOLERANCE):
+    """Douglas-Peucker line simplification."""
+    if len(coords) < 3:
+        return coords
+
+    # Find the point with the maximum distance from the line start-end
+    max_dist = 0
+    max_idx = 0
+    for i in range(1, len(coords) - 1):
+        d = _perpendicular_distance(coords[i], coords[0], coords[-1])
+        if d > max_dist:
+            max_dist = d
+            max_idx = i
+
+    if max_dist > tolerance:
+        left = simplify_ring(coords[:max_idx + 1], tolerance)
+        right = simplify_ring(coords[max_idx:], tolerance)
+        return left[:-1] + right
+    else:
+        return [coords[0], coords[-1]]
+
+
 FIPS_TO_STATE = {
     "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA",
     "08": "CO", "09": "CT", "10": "DE", "11": "DC", "12": "FL",
@@ -82,6 +125,8 @@ def import_districts(conn: sqlite3.Connection) -> None:
     # Import districts
     print("\nImporting districts...")
     imported_count = 0
+    total_points_before = 0
+    total_points_after = 0
 
     for district in districts:
         state_fips = district.get('state')
@@ -102,9 +147,44 @@ def import_districts(conn: sqlite3.Connection) -> None:
         except ValueError:
             district_number = 0
 
-        # Store polygons as JSON and compute bounding box
-        polygons_json = json.dumps(polygons)
-        all_points = [pt for ring in polygons for pt in ring]
+        # Simplify and round polygons, then store as compact JSON
+        # Handle both simple rings [[lat,lon], ...] and multi-polygon
+        # nesting [[[lat,lon], ...], ...]
+        def _is_nested(ring):
+            return ring and isinstance(ring[0], list) and isinstance(ring[0][0], list)
+
+        points_before = 0
+        points_after = 0
+        rounded = []
+        for ring in polygons:
+            if _is_nested(ring):
+                sub_rounded = []
+                for sub_ring in ring:
+                    points_before += len(sub_ring)
+                    s = simplify_ring(sub_ring)
+                    r = [[round(pt[0], COORD_DECIMALS), round(pt[1], COORD_DECIMALS)] for pt in s]
+                    points_after += len(r)
+                    sub_rounded.append(r)
+                rounded.append(sub_rounded)
+            else:
+                points_before += len(ring)
+                s = simplify_ring(ring)
+                r = [[round(pt[0], COORD_DECIMALS), round(pt[1], COORD_DECIMALS)] for pt in s]
+                points_after += len(r)
+                rounded.append(r)
+        total_points_before += points_before
+        total_points_after += points_after
+        total_points_before += points_before
+        total_points_after += points_after
+
+        polygons_json = json.dumps(rounded, separators=(',', ':'))
+        all_points = []
+        for ring in rounded:
+            if ring and isinstance(ring[0], list) and isinstance(ring[0][0], list):
+                for sub_ring in ring:
+                    all_points.extend(sub_ring)
+            else:
+                all_points.extend(ring)
         if all_points:
             lats = [p[0] for p in all_points]
             lons = [p[1] for p in all_points]
@@ -132,7 +212,10 @@ def import_districts(conn: sqlite3.Connection) -> None:
             print(f"  Warning: Skipping duplicate district {geoid}: {e}")
 
     conn.commit()
+    reduction = (1 - total_points_after / total_points_before) * 100 if total_points_before else 0
     print(f"\n✓ Successfully imported {imported_count} districts")
+    print(f"  Points: {total_points_before:,} → {total_points_after:,} ({reduction:.1f}% reduction)")
+    print(f"  Tolerance: {SIMPLIFY_TOLERANCE} degrees, precision: {COORD_DECIMALS} decimals")
 
 
 def create_indexes(conn: sqlite3.Connection) -> None:
@@ -224,6 +307,7 @@ def main():
     try:
         # Connect to database
         conn = create_connection()
+        conn.execute("PRAGMA foreign_keys = OFF")
 
         # Import districts
         import_districts(conn)

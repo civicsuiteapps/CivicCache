@@ -1,8 +1,18 @@
 # CivicCache Project Status
 
-**Last Updated**: March 2, 2026
+**Last Updated**: March 4, 2026
 
 ## 📅 Recent Changes
+
+### March 4, 2026
+- Added polygon simplification (Douglas-Peucker algorithm) to import_district_boundaries.py for optimized GeoJSON storage
+- Implemented coordinate rounding (5 decimals = ~1.1m precision) reducing boundary point count by significant margin
+- Added pyshp and pyproj to requirements.txt for shapefile and coordinate transformation support
+- Updated download_fec_bulk.py: Added MIN_ELECTION_CYCLE = 2024 to skip historical data and reduce database size
+- Updated import_fec_candidates.py: Added MIN_ELECTION_CYCLE filtering for cleaner current-election-only data
+- Created new import_redistricting.py script for future redistricting data support
+- Improved memory efficiency: Set recursion limit (50000) for processing districts with detailed boundaries
+- Enhanced database performance: Disabled foreign key checks during district import for faster bulk loading
 
 ### March 2, 2026
 - Added candidate deduplication phase (Phase 2.5) to import_fec_candidates.py

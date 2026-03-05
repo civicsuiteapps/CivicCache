@@ -494,6 +494,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
             principal_committee_id TEXT,
             image_url TEXT,
             image_blob BLOB,
+            campaign_url TEXT,
+            campaign_phone TEXT,
+            campaign_email TEXT,
+            photo_url TEXT,
+            social_facebook TEXT,
+            social_twitter TEXT,
+            social_youtube TEXT,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )

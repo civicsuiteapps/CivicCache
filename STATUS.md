@@ -4,6 +4,13 @@
 
 ## 📅 Recent Changes
 
+### March 4, 2026 (Evening)
+- Extended race_candidates schema with Google Civic API candidate contact information fields (campaign_url, campaign_phone, campaign_email, photo_url, social_facebook, social_twitter, social_youtube)
+- Added GOOGLE_CIVIC_API_KEY to config.py environment variable configuration
+- Created new import_google_civic.py script for Google Civic API integration (2026 cycle, monthly tier)
+- Added google_civic to update pipeline with proper dependencies on fec_candidates
+- Documented candidate data source enhancement plan (CANDIDATE_DATA_SOURCES.md)
+
 ### March 4, 2026
 - Added polygon simplification (Douglas-Peucker algorithm) to import_district_boundaries.py for optimized GeoJSON storage
 - Implemented coordinate rounding (5 decimals = ~1.1m precision) reducing boundary point count by significant margin

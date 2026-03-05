@@ -43,6 +43,7 @@ CONGRESS_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY") or os.environ.get(
 )
 CENSUS_API_KEY = os.environ.get("CENSUS_API_KEY", "")
 GOVINFO_API_KEY = os.environ.get("GOVINFO_API_KEY", "")
+GOOGLE_CIVIC_API_KEY = os.environ.get("GOOGLE_CIVIC_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Congress number

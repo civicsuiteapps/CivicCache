@@ -205,6 +205,15 @@ _s(
     description="Import candidate photos from Wikidata",
 )
 _s(
+    "google_civic",
+    script="import_google_civic.py",
+    args=["--cycle", "2026"],
+    tier="monthly",
+    required_env=["GOOGLE_CIVIC_API_KEY"],
+    depends_on=["fec_candidates"],
+    description="Import candidate contact info from Google Civic API",
+)
+_s(
     "openfec_candidates",
     script="import_openfec_candidates.py",
     tier="weekly",

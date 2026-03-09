@@ -129,6 +129,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             fec_id TEXT,
             ballotpedia_id TEXT,
             cspan_id TEXT,
+            lis_id TEXT,
 
             FOREIGN KEY (state_code) REFERENCES states(code)
         )

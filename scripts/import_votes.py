@@ -264,17 +264,17 @@ def import_roll_call(conn: sqlite3.Connection, vote_summary: Dict, congress: int
         vote_date,
         None,  # vote_time (not separate in API)
         vote_details.get('voteQuestion'),
-        None,  # vote_question_text
+        vote_details.get('questionText'),
         vote_details.get('voteType'),
         vote_details.get('result'),
-        None,  # vote_result_text
+        vote_details.get('resultText'),
         yea_count,
         nay_count,
         present_count,
         not_voting_count,
-        None,  # required_majority
+        vote_details.get('requiredMajority'),
         legislation_id,
-        None,  # amendment_number
+        vote_details.get('amendmentNumber'),
         vote_details.get('sourceDataURL')
     ))
 

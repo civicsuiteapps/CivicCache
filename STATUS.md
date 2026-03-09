@@ -1,8 +1,16 @@
 # CivicCache Project Status
 
-**Last Updated**: March 4, 2026
+**Last Updated**: March 8, 2026
 
 ## 📅 Recent Changes
+
+### March 8, 2026
+- Extended congress members schema with lis_id field for Legislative Information System identifiers
+- Updated import_congress_legislators.py to extract and store LIS identifiers from member data
+- Enhanced import_votes.py to populate additional vote metadata fields: questionText, resultText, requiredMajority, amendmentNumber
+- Improved vote imports by mapping Congress API response fields to database columns
+- Added import_senate_votes.py script for importing Senate roll-call votes from Senate.gov XML (daily tier)
+- Updated update.py pipeline with senate-votes stage for daily Senate vote imports
 
 ### March 4, 2026 (Evening)
 - Extended race_candidates schema with Google Civic API candidate contact information fields (campaign_url, campaign_phone, campaign_email, photo_url, social_facebook, social_twitter, social_youtube)

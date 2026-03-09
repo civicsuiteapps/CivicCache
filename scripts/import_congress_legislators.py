@@ -59,7 +59,8 @@ EXTERNAL_ID_COLUMNS = [
     'votesmart_id',
     'fec_id',
     'ballotpedia_id',
-    'cspan_id'
+    'cspan_id',
+    'lis_id'
 ]
 
 # Social media columns to update
@@ -186,6 +187,7 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
         'fec_id': fec_id,
         'ballotpedia_id': ids.get('ballotpedia'),
         'cspan_id': str(ids.get('cspan')) if ids.get('cspan') else None,
+        'lis_id': ids.get('lis'),
         # Term and contact info
         'contact_form_url': contact_form,
         'term_start_date': term_start,

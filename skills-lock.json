@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "skills": {
+    "app-store-review": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "e18a720e28fdc4982dfbae0915ba4c70f9ab7980017a842bcaff8f30b8a24a9a"
+    },
+    "apple-on-device-ai": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "93ea9b19a93279bf7b911e07066c94a79dd85fe63671f4fa3a2d940fcacf1e1e"
+    },
+    "ios-accessibility": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "0f71524e4098ee68613dafc7885e24aaf416f41309c52ace864114adc906c180"
+    },
+    "ios-localization": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "303c98724483b5d9f889611877d97340040a3aefcca1e574ec84b895b37405ce"
+    },
+    "ios-security": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "fe63b4b3e9fefe1c79352182ac3bb6f5da592e4f152c3f6c6297e5fbe1e2ea33"
+    },
+    "storekit": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "46fe7699890d5c37611a6066476dfb753c67fee3e41804f75814fa62acf388ba"
+    },
+    "swiftui-performance": {
+      "source": "dpearson2699/swift-ios-skills",
+      "sourceType": "github",
+      "computedHash": "ef9489abdd7060c3372604a78e2b763bc0bb07d377005c1332fa5e9c4dad30ae"
+    }
+  }
+}

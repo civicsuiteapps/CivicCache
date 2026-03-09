@@ -78,7 +78,15 @@ _s(
     args=["--congress", str(CONGRESS_NUMBER)],
     tier="daily",
     required_env=["CONGRESS_API_KEY"],
-    description="Import roll-call votes",
+    description="Import House roll-call votes from Congress.gov API",
+)
+_s(
+    "senate-votes",
+    script="import_senate_votes.py",
+    args=["--congress", str(CONGRESS_NUMBER)],
+    tier="daily",
+    required_env=[],
+    description="Import Senate roll-call votes from Senate.gov XML",
 )
 
 # --- weekly ---

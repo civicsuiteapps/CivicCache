@@ -502,6 +502,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
             social_facebook TEXT,
             social_twitter TEXT,
             social_youtube TEXT,
+            profession TEXT,
+            education TEXT,
+            birthplace TEXT,
+            religion TEXT,
+            military_branch TEXT,
+            military_years TEXT,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )

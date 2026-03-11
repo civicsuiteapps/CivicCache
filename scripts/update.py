@@ -222,6 +222,14 @@ _s(
     description="Import candidate contact info from Google Civic API",
 )
 _s(
+    "campaign_sites",
+    script="import_campaign_sites.py",
+    args=["--cycle", "2026"],
+    tier="monthly",
+    depends_on=["fec_candidates"],
+    description="Import campaign websites and social links from Ballotpedia + URL probing",
+)
+_s(
     "openfec_candidates",
     script="import_openfec_candidates.py",
     tier="weekly",

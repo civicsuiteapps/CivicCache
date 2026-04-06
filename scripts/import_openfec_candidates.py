@@ -40,21 +40,42 @@ def get_api_key() -> str | None:
     return os.environ.get("OPENFEC_API_KEY")
 
 
-def api_get(endpoint: str, params: dict, api_key: str) -> dict | None:
-    """Make a GET request to the OpenFEC API."""
+def api_get(
+    endpoint: str, params: dict, api_key: str, retries: int = 4
+) -> dict | None:
+    """Make a GET request to the OpenFEC API with exponential backoff."""
     params["api_key"] = api_key
     qs = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
     url = f"{OPENFEC_BASE}{endpoint}?{qs}"
 
-    try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "CivicCache/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
-        print(f"    API error: {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "CivicCache/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                wait = 2 ** (attempt + 1)
+                print(f"    Rate limited (429), waiting {wait}s...")
+                time.sleep(wait)
+            elif e.code == 404:
+                return None
+            else:
+                print(f"    HTTP {e.code}: {e.reason}")
+                if attempt == retries - 1:
+                    return None
+                time.sleep(2 ** attempt)
+        except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError) as e:
+            wait = 2 ** (attempt + 1)
+            print(f"    API error (attempt {attempt + 1}/{retries}): {e}")
+            if attempt == retries - 1:
+                return None
+            print(f"    Retrying in {wait}s...")
+            time.sleep(wait)
+
+    return None
 
 
 def get_last_update(conn: sqlite3.Connection, race_id: str) -> datetime | None:
@@ -255,6 +276,7 @@ def main() -> int:
         return 1
 
     conn = sqlite3.connect(str(args.db))
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
 

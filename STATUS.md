@@ -1,8 +1,18 @@
 # CivicCache Project Status
 
-**Last Updated**: March 8, 2026
+**Last Updated**: April 3, 2026
 
 ## 📅 Recent Changes
+
+### April 3, 2026
+- Enhanced import_campaign_sites.py: Added rival candidate detection to prevent misidentified campaign websites (e.g. wrong Chen when probing for candidate with same surname)
+- Improved photo validation: Added last-name matching in photo URLs to prevent Ballotpedia redirects from saving wrong candidate photos
+- Enhanced import_congressional_staff.py: Added filtering for "(OTHER COMPENSATION)" pay lines to avoid duplicate staffer records
+- Improved duplicate detection: Added pre-check for existing records before insert and explicit duplicate skip tracking
+- Fixed import_fec_committees.py: Added proper foreign key constraint handling by deleting linkages before committees
+- Fixed import_member_positions.py: Updated duplicate detection to check position_type instead of position_title for broader cross-source deduplication
+- Enhanced import_openfec_candidates.py: Added exponential backoff retry logic with rate-limit (429) handling for OpenFEC API resilience
+- Optimized database connection: Added PRAGMA busy_timeout = 30000 for better concurrent access
 
 ### March 8, 2026
 - Extended congress members schema with lis_id field for Legislative Information System identifiers

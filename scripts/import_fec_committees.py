@@ -126,8 +126,9 @@ def import_committees(conn: sqlite3.Connection) -> int:
     if not COMMITTEE_DIR.exists():
         raise FileNotFoundError(f"Committee directory not found: {COMMITTEE_DIR}")
 
-    # Clear existing committee data
+    # Clear existing committee data (linkages first to satisfy FK constraints)
     print("Clearing existing committee data...")
+    conn.execute("DELETE FROM candidate_committee_linkages")
     conn.execute("DELETE FROM committees")
     conn.commit()
 

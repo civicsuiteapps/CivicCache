@@ -1399,6 +1399,12 @@ class HouseSODImporter:
                 if 'INTERN' in program.upper():
                     continue
 
+                # Skip "(OTHER COMPENSATION)" pay lines — these are supplemental
+                # pay entries for the same staffer, not separate people
+                description = row.get('DESCRIPTION', '')
+                if '(OTHER COMPENSATION)' in description.upper():
+                    continue
+
                 # Extract data
                 vendor_name = row.get('VENDOR NAME', '').strip()
                 title = row.get('DESCRIPTION', '').strip()
@@ -2175,7 +2181,7 @@ class StaffDatabase:
         print(f"✅ Database schema ready at {self.db_path}")
 
     def insert_staff_records(self, records: List[Dict], congress: int, package_id: str):
-        """Insert staff records into database."""
+        """Insert staff records into database, skipping duplicates."""
         if not records:
             print("⚠️  No records to insert")
             return 0
@@ -2184,9 +2190,26 @@ class StaffDatabase:
         cursor = conn.cursor()
 
         inserted = 0
+        skipped = 0
 
         for record in records:
             try:
+                # Check for existing record with same person+title+member+congress
+                cursor.execute("""
+                    SELECT 1 FROM congressional_staff
+                    WHERE full_name = ? AND title = ?
+                      AND member_bioguide_id IS ? AND congress_number = ?
+                    LIMIT 1
+                """, (
+                    record['full_name'],
+                    record['title'],
+                    record.get('member_bioguide_id'),
+                    congress,
+                ))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
                 cursor.execute("""
                     INSERT INTO congressional_staff (
                         first_name, last_name, full_name, suffix,
@@ -2217,13 +2240,12 @@ class StaffDatabase:
                 inserted += 1
 
             except sqlite3.IntegrityError:
-                # Duplicate, skip
-                pass
+                skipped += 1
 
         conn.commit()
         conn.close()
 
-        print(f"✅ Inserted {inserted} staff records")
+        print(f"✅ Inserted {inserted} staff records ({skipped} duplicates skipped)")
         return inserted
 
 

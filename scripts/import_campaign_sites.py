@@ -364,11 +364,21 @@ def generate_candidate_urls(first: str, last: str, office: str, state: str) -> l
     return unique
 
 
-def probe_url(url: str, first_name: str, last_name: str, timeout: int = 8) -> str | None:
+def probe_url(
+    url: str,
+    first_name: str,
+    last_name: str,
+    rival_first_names: list[str] | None = None,
+    timeout: int = 8,
+) -> str | None:
     """Probe a URL to see if it's a real campaign website.
 
     Requires BOTH first and last name to appear on the page to avoid
     false positives (e.g. mitchellforcongress.com for wrong Mitchell).
+
+    If *rival_first_names* is provided (other candidates sharing the same
+    last name), the URL is rejected when a rival's full name appears on
+    the page — e.g. "Jay Chen" on a page probed for Anita Chen.
     """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -382,6 +392,15 @@ def probe_url(url: str, first_name: str, last_name: str, timeout: int = 8) -> st
         # Require BOTH first and last name on the page
         if first_name.lower() not in body or last_name.lower() not in body:
             return None
+
+        # Reject if a rival candidate's full name appears on the page
+        # (e.g. "jay chen" on a page being probed for Anita Chen)
+        if rival_first_names:
+            last_lower = last_name.lower()
+            for rival in rival_first_names:
+                rival_full = f"{rival.lower()} {last_lower}"
+                if rival_full in body:
+                    return None
 
         for marker in PARKED_MARKERS:
             if marker in body:
@@ -397,14 +416,18 @@ def probe_url(url: str, first_name: str, last_name: str, timeout: int = 8) -> st
 
 
 def probe_candidate_urls(
-    first: str, last: str, office: str, state: str
+    first: str,
+    last: str,
+    office: str,
+    state: str,
+    rival_first_names: list[str] | None = None,
 ) -> str | None:
     """Generate and probe candidate URL patterns concurrently."""
     urls = generate_candidate_urls(first, last, office, state)
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
-            executor.submit(probe_url, url, first, last): url
+            executor.submit(probe_url, url, first, last, rival_first_names): url
             for url in urls
         }
         for future in as_completed(futures):
@@ -843,15 +866,29 @@ def main() -> int:
                 stats["with_military"] += 1
 
             # Download photo if available and candidate doesn't already have one
+            # Validate: photo filename must contain the candidate's last name
+            # to prevent Ballotpedia redirects/disambiguations from saving
+            # the wrong person's photo (e.g. Qadir getting Elam's photo)
             photo_bytes = None
             if (
                 data["photo_url"]
                 and not args.skip_photos
                 and not cand["has_photo"]
             ):
-                photo_bytes = download_photo(data["photo_url"])
-                if photo_bytes:
-                    stats["photos_downloaded"] += 1
+                # Extract last name from FEC "LAST, FIRST" format
+                cand_last = cand["candidate_name"].split(",")[0].strip()
+                photo_lower = data["photo_url"].lower()
+                last_underscored = cand_last.lower().replace(" ", "_")
+                last_joined = cand_last.lower().replace(" ", "")
+                if last_underscored in photo_lower or last_joined in photo_lower:
+                    photo_bytes = download_photo(data["photo_url"])
+                    if photo_bytes:
+                        stats["photos_downloaded"] += 1
+                else:
+                    # Photo filename doesn't match candidate — skip it
+                    data["photo_url"] = None
+                    stats.setdefault("photos_skipped_mismatch", 0)
+                    stats["photos_skipped_mismatch"] += 1
 
             if args.dry_run:
                 parts = [f"{cand['candidate_name'][:30]:30s}"]
@@ -895,12 +932,27 @@ def main() -> int:
         if still_missing:
             print(f"\n--- Phase 3: URL pattern probing ({len(still_missing)} candidates) ---")
 
+            # Build a lookup of rival first names by last name.
+            # If two candidates share a last name (e.g. "Anita Chen" and
+            # "Jay Chen"), the probe for one must reject pages that belong
+            # to the other.
+            _last_to_firsts: dict[str, list[str]] = {}
+            for cand in still_missing:
+                first, last = fec_name_to_parts(cand["candidate_name"])
+                if first and last:
+                    _last_to_firsts.setdefault(last.lower(), []).append(first)
+
             # Prepare tasks (skip candidates with unusable names)
             probe_tasks = []
             for cand in still_missing:
                 first, last = fec_name_to_parts(cand["candidate_name"])
                 if first and last and len(first) > 1:
-                    probe_tasks.append((cand, first, last))
+                    # Rival first names: others with same last name
+                    rivals = [
+                        n for n in _last_to_firsts.get(last.lower(), [])
+                        if n.lower() != first.lower()
+                    ] or None
+                    probe_tasks.append((cand, first, last, rivals))
 
             # Process candidates in parallel batches
             batch_size = 20
@@ -910,9 +962,10 @@ def main() -> int:
                 with ThreadPoolExecutor(max_workers=20) as executor:
                     futures = {
                         executor.submit(
-                            probe_candidate_urls, first, last, cand["office"], cand["state"]
+                            probe_candidate_urls, first, last, cand["office"], cand["state"],
+                            rivals,
                         ): cand
-                        for cand, first, last in batch
+                        for cand, first, last, rivals in batch
                     }
 
                     for future in as_completed(futures):
@@ -1011,6 +1064,8 @@ def main() -> int:
     print(f"      Religion:       {stats['with_religion']}")
     print(f"      Military:       {stats['with_military']}")
     print(f"      Photos DL'd:    {stats['photos_downloaded']}")
+    if stats.get("photos_skipped_mismatch", 0) > 0:
+        print(f"      Photos skipped: {stats['photos_skipped_mismatch']} (name mismatch)")
     print(f"    Page not found:   {stats['page_404']}")
     print(f"    No data found:    {stats['not_found'] - stats['page_404']}")
     print(f"    Skipped (names):  {stats['skipped']}")

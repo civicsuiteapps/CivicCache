@@ -321,11 +321,12 @@ def fetch_congress_terms(bioguide_id: str) -> list:
 def insert_positions(conn: sqlite3.Connection, member_id: str, positions: list):
     """Insert positions for a member."""
     for pos in positions:
-        # Check if this position already exists (avoid duplicates)
+        # Check if this position already exists (avoid duplicates across sources)
         existing = conn.execute("""
             SELECT id FROM member_positions
-            WHERE member_id = ? AND position_title = ? AND start_year IS ? AND source = ?
-        """, (member_id, pos['position_title'], pos['start_year'], pos['source'])).fetchone()
+            WHERE member_id = ? AND position_type = ? AND start_year IS ?
+            LIMIT 1
+        """, (member_id, pos['position_type'], pos['start_year'])).fetchone()
 
         if existing:
             continue

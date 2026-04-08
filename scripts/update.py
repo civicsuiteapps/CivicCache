@@ -198,6 +198,14 @@ _s(
     description="Import top PAC/committee contributors for all candidates",
 )
 _s(
+    "committee_financials",
+    script="import_committee_financials.py",
+    args=["--cycle", "2026", "--api-limit", "500"],
+    tier="monthly",
+    depends_on=["fec_committees", "fec_summary"],
+    description="Populate committees.total_receipts/disbursements/cash_on_hand",
+)
+_s(
     "race_ratings",
     script="import_race_ratings.py",
     tier="monthly",

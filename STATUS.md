@@ -1,8 +1,13 @@
 # CivicCache Project Status
 
-**Last Updated**: April 3, 2026
+**Last Updated**: April 3, 2026 (Evening)
 
 ## 📅 Recent Changes
+
+### April 3, 2026 (Evening)
+- Enhanced import_fec_committees.py: Added filtering for terminated (T) and administratively terminated (A) committees to prevent bloating the table with inactive entities
+- Created new import_committee_financials.py script: Populates committees.total_receipts, committees.disbursements, and committees.cash_on_hand fields using OpenFEC API
+- Updated update.py pipeline: Added committee_financials stage (monthly tier, depends on fec_committees and fec_summary)
 
 ### April 3, 2026
 - Enhanced import_campaign_sites.py: Added rival candidate detection to prevent misidentified campaign websites (e.g. wrong Chen when probing for candidate with same surname)

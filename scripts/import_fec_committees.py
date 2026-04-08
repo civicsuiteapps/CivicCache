@@ -37,7 +37,11 @@ LINKAGE_DIR = Path("data/raw/fec/Candidate-Committee-Linkages")
 
 
 def parse_committee_line(line: str) -> Optional[Dict[str, Any]]:
-    """Parse a committee record from pipe-delimited format."""
+    """Parse a committee record from pipe-delimited format.
+
+    Filters out terminated (T) and administratively terminated (A)
+    committees -- these have no current activity and bloat the table.
+    """
     fields = line.strip().split('|')
 
     if len(fields) < 14:
@@ -49,6 +53,11 @@ def parse_committee_line(line: str) -> Optional[Dict[str, Any]]:
 
     committee_id = fields[0].strip()
     if not committee_id:
+        return None
+
+    # Skip terminated and administratively terminated committees
+    filing_freq = fields[11].strip().upper()
+    if filing_freq in ('T', 'A'):
         return None
 
     return {

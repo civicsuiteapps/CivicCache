@@ -93,8 +93,9 @@ _s(
 _s(
     "legislators",
     script="import_congress_legislators.py",
+    args=["--include-historical"],
     tier="weekly",
-    description="Import/update legislators from GitHub YAML",
+    description="Import/update legislators from GitHub YAML (incl. mid-term departures from current Congress)",
 )
 _s(
     "committees",

@@ -327,8 +327,11 @@ def get_latest_update_date(conn: sqlite3.Connection) -> Optional[str]:
 
 
 def fetch_updated_bills(since: str) -> List[Dict]:
-    """Fetch bills updated since *since* (ISO datetime string)."""
-    print(f"\nFetching bills updated since {since}...")
+    """Fetch bills updated since *since* (ISO datetime or YYYY-MM-DD)."""
+    # Normalize: API expects fromDateTime=YYYY-MM-DDTHH:MM:SSZ. The cursor we
+    # store may be either a date (`YYYY-MM-DD`) or a full ISO timestamp.
+    from_dt = since if "T" in since else f"{since}T00:00:00Z"
+    print(f"\nFetching bills updated since {from_dt}...")
 
     all_bills = []
     offset = 0
@@ -338,7 +341,7 @@ def fetch_updated_bills(since: str) -> List[Dict]:
         url = (
             f"{CONGRESS_API_BASE}/bill/{CONGRESS_NUMBER}"
             f"?offset={offset}&limit={limit}"
-            f"&fromDateTime={since}T00:00:00Z"
+            f"&fromDateTime={from_dt}"
             f"&sort=updateDate+desc"
             f"&api_key={API_KEY}&format=json"
         )

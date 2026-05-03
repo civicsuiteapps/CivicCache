@@ -78,9 +78,10 @@ TERM_COLUMNS = [
 ]
 
 try:
-    from config import DB_PATH as _CFG_DB
+    from config import DB_PATH as _CFG_DB, CONGRESS_NUMBER as _CFG_CONGRESS
 except ImportError:
     _CFG_DB = None
+    _CFG_CONGRESS = 119
     # Fallback .env loading
     env_path = Path(__file__).parent.parent / '.env'
     if env_path.exists():
@@ -92,6 +93,15 @@ except ImportError:
                     os.environ.setdefault(key, value)
 
 DATABASE_PATH = _CFG_DB or (Path(__file__).parent.parent / os.environ.get('DATABASE_PATH', 'data/civic_cache.db'))
+
+# Date range for the current Congress. The modern (post-20th-Amendment)
+# Congress starts Jan 3 of odd-numbered year = 1789 + 2*(N-1).
+_CC_START_YEAR = 1789 + 2 * (_CFG_CONGRESS - 1)
+CURRENT_CONGRESS_START = f"{_CC_START_YEAR}-01-03"
+CURRENT_CONGRESS_END = f"{_CC_START_YEAR + 2}-01-03"
+
+# YAML uses "Democrat"; DB uses "Democratic"
+_PARTY_MAP = {"Democrat": "Democratic"}
 
 
 def download_social_media() -> Dict[str, Dict]:
@@ -150,6 +160,16 @@ def get_existing_members(conn: sqlite3.Connection) -> Dict[str, Dict]:
     return members
 
 
+def served_in_current_congress(legislator: Dict) -> bool:
+    """True if any term overlaps the current Congress's date range."""
+    for term in legislator.get('terms', []):
+        start = term.get('start') or ''
+        end = term.get('end') or ''
+        if start < CURRENT_CONGRESS_END and end > CURRENT_CONGRESS_START:
+            return True
+    return False
+
+
 def extract_member_data(legislator: Dict) -> Optional[Dict]:
     """Extract relevant fields from a legislator entry."""
     ids = legislator.get('id', {})
@@ -171,10 +191,24 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
     term_start = current_term.get('start')  # Format: YYYY-MM-DD
     term_end = current_term.get('end')  # Format: YYYY-MM-DD
 
+    # Term-derived fields needed when inserting a new row
+    term_type = current_term.get('type')
+    chamber = 'Senate' if term_type == 'sen' else ('House' if term_type == 'rep' else None)
+    state_code = current_term.get('state')
+    district_raw = current_term.get('district')
+    district = str(district_raw) if district_raw is not None else ''
+    party = current_term.get('party')
+    current_party = _PARTY_MAP.get(party, party) if party else None
+
+    full_name = name.get('official_full') or ' '.join(
+        p for p in [name.get('first'), name.get('last')] if p
+    )
+
     return {
         'bioguide_id': bioguide_id,
         'first_name': name.get('first'),
         'last_name': name.get('last'),
+        'full_name': full_name,
         'middle_name': name.get('middle'),
         'nickname': name.get('nickname'),
         'birthday': bio.get('birthday'),  # Format: YYYY-MM-DD
@@ -192,7 +226,74 @@ def extract_member_data(legislator: Dict) -> Optional[Dict]:
         'contact_form_url': contact_form,
         'term_start_date': term_start,
         'term_end_date': term_end,
+        # Term-derived (used only on insert)
+        'chamber': chamber,
+        'state_code': state_code,
+        'district': district,
+        'current_party': current_party,
     }
+
+
+def get_state_name_lookup(conn: sqlite3.Connection) -> Dict[str, str]:
+    """Build state code -> state name map from the states table."""
+    return dict(conn.execute("SELECT code, name FROM states").fetchall())
+
+
+def insert_member(
+    conn: sqlite3.Connection,
+    data: Dict,
+    state_names: Dict[str, str],
+    dry_run: bool = False,
+) -> bool:
+    """Insert a new row in congress_members. Returns True on success.
+
+    Required NOT NULL columns: id, first_name, last_name, full_name,
+    chamber, state_name, current_party.
+    """
+    state_code = data.get('state_code') or ''
+    state_name = state_names.get(state_code) or state_code or 'Unknown'
+
+    required = {
+        'id': data.get('bioguide_id'),
+        'first_name': data.get('first_name'),
+        'last_name': data.get('last_name'),
+        'full_name': data.get('full_name'),
+        'chamber': data.get('chamber'),
+        'state_name': state_name,
+        'current_party': data.get('current_party'),
+    }
+    missing = [k for k, v in required.items() if not v]
+    if missing:
+        print(f"  SKIP insert {data.get('bioguide_id')}: missing {missing}")
+        return False
+
+    cols = list(required.keys()) + [
+        'state_code', 'district', 'middle_name', 'nickname',
+        'birthday', 'gender', 'contact_form_url',
+        'term_start_date', 'term_end_date',
+    ] + EXTERNAL_ID_COLUMNS + SOCIAL_MEDIA_COLUMNS
+
+    values = [required[k] for k in required] + [
+        state_code,
+        data.get('district', ''),
+        data.get('middle_name'),
+        data.get('nickname'),
+        data.get('birthday'),
+        data.get('gender'),
+        data.get('contact_form_url'),
+        data.get('term_start_date'),
+        data.get('term_end_date'),
+    ] + [data.get(c) for c in EXTERNAL_ID_COLUMNS] + [data.get(c) for c in SOCIAL_MEDIA_COLUMNS]
+
+    if dry_run:
+        return True
+
+    placeholders = ', '.join(['?'] * len(cols))
+    conn.execute(
+        f"INSERT INTO congress_members ({', '.join(cols)}) VALUES ({placeholders})",
+        values,
+    )
+    return True
 
 
 def update_member(conn: sqlite3.Connection, bioguide_id: str, data: Dict, existing: Dict, dry_run: bool = False) -> List[str]:
@@ -284,6 +385,7 @@ def main():
 
     # Get existing members
     existing_members = get_existing_members(conn)
+    state_names = get_state_name_lookup(conn)
     print(f"Found {len(existing_members)} members in database")
     print()
 
@@ -292,7 +394,11 @@ def main():
 
     if args.include_historical:
         historical = download_yaml(LEGISLATORS_HISTORICAL_URL, item_name="legislators")
-        legislators.extend(historical)
+        # Only keep historical entries who served in the current Congress —
+        # avoids pulling in thousands of unrelated legislators back to 1789.
+        relevant = [m for m in historical if served_in_current_congress(m)]
+        print(f"  Historical entries overlapping {_CFG_CONGRESS}th Congress: {len(relevant)}")
+        legislators.extend(relevant)
 
     # Download social media data
     print()
@@ -302,6 +408,7 @@ def main():
     stats = {
         'matched': 0,
         'not_found': 0,
+        'inserted': 0,
         'updated': 0,
         'no_changes': 0,
         'fields_updated': {}
@@ -322,6 +429,14 @@ def main():
             data.update(social_media[bioguide_id])
 
         if bioguide_id not in existing_members:
+            # Insert missing members who served in the current Congress
+            # (only reachable when --include-historical is set, since we
+            # already filtered by current-Congress overlap above).
+            if args.include_historical and served_in_current_congress(legislator):
+                if insert_member(conn, data, state_names, args.dry_run):
+                    stats['inserted'] += 1
+                    print(f"  INSERTED: {data.get('full_name')} ({bioguide_id})")
+                    continue
             stats['not_found'] += 1
             continue
 
@@ -362,6 +477,7 @@ def main():
     print("=" * 70)
     print(f"Legislators processed: {len(legislators)}")
     print(f"Matched in database: {stats['matched']}")
+    print(f"Inserted (current-Congress backfill): {stats['inserted']}")
     print(f"Not found in database: {stats['not_found']}")
     print(f"Members updated: {stats['updated']}")
     print(f"No changes needed: {stats['no_changes']}")

@@ -56,16 +56,24 @@ SOURCES = {
         "plan_name": "AB604",
         "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO", "CDIST"],
     },
+    "12": {  # Florida
+        "url": "https://www.flsenate.gov/PublishedContent/Session/Congressional/EOGPCRP2026.zip",
+        "expected_districts": 28,
+        "plan_name": "EOGPCRP2026",
+        "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO", "EOGPCRP2026"],
+    },
 }
 
 FIPS_TO_STATE = {
     "06": "CA",
+    "12": "FL",
     "48": "TX",
 }
 
 # Bounding boxes for coordinate validation [min_lat, max_lat, min_lon, max_lon]
 STATE_BOUNDS = {
     "06": (32.0, 42.5, -125.0, -114.0),   # California
+    "12": (24.4, 31.1, -87.7, -79.9),      # Florida
     "48": (25.5, 36.6, -106.7, -93.5),     # Texas
 }
 

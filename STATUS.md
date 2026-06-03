@@ -1,8 +1,17 @@
 # CivicCache Project Status
 
-**Last Updated**: April 3, 2026 (Evening)
+**Last Updated**: June 2, 2026
 
 ## 📅 Recent Changes
+
+### June 2, 2026
+- Enhanced build_database.py: Improved incremental database build process with better error handling
+- Significantly expanded update_redistricting.py: Added comprehensive redistricting source management with support for multiple TIGER/Line and EOGP sources
+  - Implemented detailed redistricting metadata tracking (source_type, display_name, cycle)
+  - Added geographic boundary extraction and simplification for efficient storage
+  - Extended race_candidates schema with redistricting reference fields
+  - Created log_primary_loss.py utility for analyzing primary election results and race status
+  - Refined data import pipeline with improved validation and conflict resolution
 
 ### April 3, 2026 (Evening)
 - Enhanced import_fec_committees.py: Added filtering for terminated (T) and administratively terminated (A) committees to prevent bloating the table with inactive entities

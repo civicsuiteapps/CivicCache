@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-Fetch official state-published redistricting shapefiles and merge new
-congressional district boundaries into DistrictData.json.
+Fetch official state-published redistricting boundaries and merge new
+congressional district maps into DistrictData.json.
 
-California (AB 604) and Texas (PLANC2333) enacted new maps in 2025 for
-the 2026 elections. Census TIGERweb hasn't updated yet, so this script
-pulls the authoritative shapefiles directly from state sources.
+A wave of mid-decade redistricting enacted new maps for the 2026 elections
+(CA, TX, FL, MO, NC, OH, TN, UT) that Census TIGERweb hasn't picked up yet,
+so this script pulls the authoritative geometry directly from state sources.
+
+Each entry in SOURCES has a "source_type":
+  - "shapefile" (default): download a zip and read it with pyshp (CA, TX, FL, MO).
+  - "arcgis": query an ArcGIS feature/map service layer as WGS84 GeoJSON
+    (NC, OH, TN, UT) -- for states that only publish their map via ArcGIS.
 
 Usage:
-    python3 scripts/update_redistricting.py                  # Update both CA and TX
-    python3 scripts/update_redistricting.py --states TX      # Texas only
+    python3 scripts/update_redistricting.py                  # Update all configured states
+    python3 scripts/update_redistricting.py --states TN,UT   # Specific states only
     python3 scripts/update_redistricting.py --force          # Re-download cached files
     python3 scripts/update_redistricting.py --dry-run        # Parse & show stats, don't write
-    python3 scripts/update_redistricting.py --inspect        # Show shapefile field names and exit
+    python3 scripts/update_redistricting.py --inspect        # Show source field names and exit
 """
 
 import argparse
@@ -62,19 +67,77 @@ SOURCES = {
         "plan_name": "EOGPCRP2026",
         "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO", "EOGPCRP2026"],
     },
+    "29": {  # Missouri -- HB1, 2025 special session, signed Sep 28 2025.
+        # ArcGIS "Shapefile" file item (MSDIS / Univ. of Missouri); /data is a direct zip.
+        "source_type": "shapefile",
+        "url": "https://www.arcgis.com/sharing/rest/content/items/ee1971b86cce43d4b92b5ce614866a18/data",
+        "expected_districts": 8,
+        "plan_name": "MO_HB1_2025",
+        "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO", "CONG_DIST", "CONGRESS"],
+    },
+    "37": {  # North Carolina -- Session Law 2025-95 (plan C2025E), Oct 2025.
+        # NC General Assembly hosted feature service (NC OneMap).
+        "source_type": "arcgis",
+        "url": "https://services5.arcgis.com/gRcZqepTaRC6tVZL/arcgis/rest/services/NCGA_Congress_2025/FeatureServer/0",
+        "expected_districts": 14,
+        "plan_name": "NC_C2025E",
+        "district_field_candidates": ["District", "DISTRICT", "DIST", "CD", "DISTRICTNO"],
+    },
+    "39": {  # Ohio -- Redistricting Commission plan adopted Oct 31 / Nov 3 2025.
+        # State-hosted feature service (maps.ohio.gov / OGRIP).
+        "source_type": "arcgis",
+        "url": "https://maps.ohio.gov/arcgis/rest/services/Hosted/Districts_2025_11_03_SHP/FeatureServer/0",
+        "expected_districts": 15,
+        "plan_name": "OH_2025_11_03",
+        "district_field_candidates": ["district", "DISTRICT", "DIST", "CD", "DISTRICTNO"],
+    },
+    "47": {  # Tennessee -- 2nd Extraordinary Session, 114th GA, signed May 7 2026.
+        # State-hosted ArcGIS (tnmap.tn.gov); layer 2 = congressional (9 districts).
+        "source_type": "arcgis",
+        "url": "https://tnmap.tn.gov/arcgis/rest/services/ADMINISTRATIVE_BOUNDARIES/LEGISLATIVE_DISTRICTS/MapServer/2",
+        "expected_districts": 9,
+        "plan_name": "TN_2026",
+        "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO"],
+    },
+    "49": {  # Utah -- "Map 1A", Third Judicial District Court (2026-2032).
+        # Utah SGID feature service (services1.arcgis.com / UGRC).
+        "source_type": "arcgis",
+        "url": "https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/political_us_congress_districts_2026_to_2032/FeatureServer/0",
+        "expected_districts": 4,
+        "plan_name": "UT_2026_MAP1A",
+        "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO"],
+    },
+    # Louisiana (FIPS 22) enacted a new map in late May 2026 after Louisiana v.
+    # Callais (SCOTUS, Apr 29 2026), eliminating one majority-Black district. The
+    # authoritative shapefile was not yet published at redist.legis.la.gov as of
+    # 2026-06-02 (site still tops out at 2024 Act 2 / SB8). Add an "arcgis"/"shapefile"
+    # entry here once the enacted plan is posted.
+    #
+    # Alabama (FIPS 01) is intentionally NOT listed: as of 2026-06-02 a three-judge
+    # panel has enjoined the state's switch to the 2023 map, so boundaries are unsettled.
 }
 
 FIPS_TO_STATE = {
     "06": "CA",
     "12": "FL",
+    "29": "MO",
+    "37": "NC",
+    "39": "OH",
+    "47": "TN",
     "48": "TX",
+    "49": "UT",
 }
 
 # Bounding boxes for coordinate validation [min_lat, max_lat, min_lon, max_lon]
 STATE_BOUNDS = {
     "06": (32.0, 42.5, -125.0, -114.0),   # California
     "12": (24.4, 31.1, -87.7, -79.9),      # Florida
+    "29": (35.9, 40.7, -95.8, -89.0),      # Missouri
+    "37": (33.7, 36.6, -84.4, -75.4),      # North Carolina
+    "39": (38.3, 42.1, -84.9, -80.5),      # Ohio
+    "47": (34.9, 36.7, -90.4, -81.6),      # Tennessee
     "48": (25.5, 36.6, -106.7, -93.5),     # Texas
+    "49": (36.9, 42.1, -114.1, -108.9),    # Utah
 }
 
 # Paths
@@ -161,6 +224,166 @@ def extract_shapefile(zip_path: Path, extract_dir: Path) -> Optional[Path]:
 
     print(f"    Found shapefile: {shp_files[0].name}")
     return shp_files[0]
+
+
+# ---------------------------------------------------------------------------
+# ArcGIS feature/map service (GeoJSON) -- used by states that only publish
+# their enacted maps via ArcGIS rather than a downloadable shapefile zip.
+# Querying the layer as GeoJSON in WGS84 avoids ArcGIS Hub's asynchronous,
+# time-signed shapefile exports (which return HTTP 202 on a cold cache).
+# ---------------------------------------------------------------------------
+
+def fetch_arcgis_geojson(url: str, dest: Path, force: bool = False, retries: int = 3) -> bool:
+    """Query an ArcGIS feature/map service layer as WGS84 GeoJSON; cache to dest."""
+    if dest.exists() and not force:
+        size_kb = dest.stat().st_size / 1024
+        print(f"  Skip (cached, {size_kb:.0f} KB): {dest.name}")
+        return True
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    query = (
+        url.rstrip("/")
+        + "/query?where=1%3D1&outFields=*&outSR=4326&returnGeometry=true&f=geojson"
+    )
+
+    for attempt in range(retries):
+        try:
+            print(f"  Querying {query} ...")
+            req = urllib.request.Request(query, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read()
+
+            # Validate it's a real FeatureCollection before caching -- a stray
+            # error/HTML body must not be silently written as if it were data.
+            obj = json.loads(raw)
+            if obj.get("type") != "FeatureCollection" or not obj.get("features"):
+                raise ValueError(f"unexpected response: {str(obj)[:200]}")
+            if obj.get("exceededTransferLimit"):
+                raise ValueError("exceededTransferLimit -- response is paginated/truncated")
+
+            dest.write_bytes(raw)
+            print(f"    Saved: {dest.name} ({len(obj['features'])} features, {len(raw) / 1024:.0f} KB)")
+            return True
+
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+                ValueError, json.JSONDecodeError) as exc:
+            print(f"    Attempt {attempt + 1}/{retries} failed: {exc}")
+            if dest.exists():
+                dest.unlink()
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+
+    return False
+
+
+def inspect_geojson(geojson_path: Path) -> None:
+    """Print GeoJSON feature count, property keys, and sample properties."""
+    with open(geojson_path) as f:
+        gj = json.load(f)
+    feats = gj.get("features", [])
+    print(f"\n  GeoJSON: {geojson_path.name}")
+    print(f"  Features: {len(feats)}")
+    if feats:
+        print(f"  Property keys: {list(feats[0].get('properties', {}).keys())}")
+        print(f"  Geometry type: {feats[0].get('geometry', {}).get('type')}")
+        print("  Sample properties (first 3):")
+        for feat in feats[:3]:
+            print(f"    {feat.get('properties')}")
+
+
+def parse_geojson_districts(
+    geojson_path: Path,
+    fips: str,
+    expected: int,
+    field_candidates: List[str],
+) -> Optional[List[dict]]:
+    """Parse districts from an ArcGIS GeoJSON FeatureCollection (WGS84 lon/lat)."""
+    with open(geojson_path) as f:
+        gj = json.load(f)
+
+    features = gj.get("features", [])
+    if not features:
+        print("    Error: no features in GeoJSON")
+        return None
+
+    # Detect district field (case-insensitive) from the first feature's props.
+    props_keys = list(features[0].get("properties", {}).keys())
+    district_field = None
+    for cand in field_candidates:
+        for key in props_keys:
+            if key.upper() == cand.upper():
+                district_field = key
+                break
+        if district_field:
+            break
+    if district_field is None:
+        print(f"    Error: could not detect district field. Available: {props_keys}")
+        return None
+    print(f"    Using district field: {district_field}")
+
+    districts_by_num: Dict[int, dict] = {}
+
+    for feat in features:
+        props = feat.get("properties", {})
+        geom = feat.get("geometry") or {}
+
+        raw_val = props.get(district_field)
+        try:
+            district_num = int(raw_val)
+        except (ValueError, TypeError):
+            print(f"    Warning: skipping record with non-numeric district value: {raw_val}")
+            continue
+        if district_num < 1:
+            continue
+
+        # Normalize Polygon / MultiPolygon to a list of polygons (each a list of rings).
+        gtype = geom.get("type")
+        coords = geom.get("coordinates") or []
+        if gtype == "Polygon":
+            polygons = [coords]
+        elif gtype == "MultiPolygon":
+            polygons = coords
+        else:
+            print(f"    Warning: district {district_num} unsupported geometry: {gtype}")
+            continue
+
+        rings = []
+        for poly in polygons:
+            for ring_pts in poly:
+                # GeoJSON ring points are [lon, lat]; store as [lat, lon].
+                ring = [[round(pt[1], 6), round(pt[0], 6)] for pt in ring_pts]
+                if len(ring) >= 3:
+                    rings.append(ring)
+
+        if not rings:
+            print(f"    Warning: district {district_num} has no valid rings")
+            continue
+
+        if district_num in districts_by_num:
+            districts_by_num[district_num]["polygons"].extend(rings)
+        else:
+            district_code = f"{district_num:02d}"
+            districts_by_num[district_num] = {
+                "state": fips,
+                "district_code": district_code,
+                "name": f"Congressional District {district_num}",
+                "geoid": f"{fips}{district_code}",
+                "center_latitude": 0.0,
+                "center_longitude": 0.0,
+                "population": 0,
+                "polygons": rings,
+            }
+
+    # Compute centroids from bounding box of all rings.
+    for dist in districts_by_num.values():
+        all_lats = [pt[0] for ring in dist["polygons"] for pt in ring]
+        all_lons = [pt[1] for ring in dist["polygons"] for pt in ring]
+        dist["center_latitude"] = round((min(all_lats) + max(all_lats)) / 2, 6)
+        dist["center_longitude"] = round((min(all_lons) + max(all_lons)) / 2, 6)
+
+    districts = list(districts_by_num.values())
+    print(f"    Parsed {len(districts)} districts from GeoJSON")
+    return districts
 
 
 # ---------------------------------------------------------------------------
@@ -531,31 +754,48 @@ def main() -> int:
         src = SOURCES[fips]
         state_abbr = FIPS_TO_STATE[fips]
         plan = src["plan_name"]
+        source_type = src.get("source_type", "shapefile")
 
         print(f"--- {state_abbr} ({plan}) ---")
 
-        zip_dest = RAW_DIR / f"{plan.lower()}.zip"
-        extract_dir = RAW_DIR / plan.lower()
+        if source_type == "arcgis":
+            # Fetch the enacted map from an ArcGIS layer as WGS84 GeoJSON.
+            gj_dest = RAW_DIR / f"{plan.lower()}.geojson"
+            if not fetch_arcgis_geojson(src["url"], gj_dest, force=args.force):
+                print(f"  FAILED to fetch {state_abbr} GeoJSON")
+                return 1
 
-        # Download
-        if not download_shapefile(src["url"], zip_dest, force=args.force):
-            print(f"  FAILED to download {state_abbr} shapefile")
-            return 1
+            if args.inspect:
+                inspect_geojson(gj_dest)
+                continue
 
-        # Extract
-        shp_path = extract_shapefile(zip_dest, extract_dir)
-        if shp_path is None:
-            return 1
+            districts = parse_geojson_districts(
+                gj_dest, fips, src["expected_districts"], src["district_field_candidates"]
+            )
+        else:
+            zip_dest = RAW_DIR / f"{plan.lower()}.zip"
+            extract_dir = RAW_DIR / plan.lower()
 
-        # Inspect mode: show fields and exit
-        if args.inspect:
-            inspect_shapefile(shp_path)
-            continue
+            # Download
+            if not download_shapefile(src["url"], zip_dest, force=args.force):
+                print(f"  FAILED to download {state_abbr} shapefile")
+                return 1
 
-        # Parse
-        districts = parse_shapefile_districts(
-            shp_path, fips, src["expected_districts"], src["district_field_candidates"]
-        )
+            # Extract
+            shp_path = extract_shapefile(zip_dest, extract_dir)
+            if shp_path is None:
+                return 1
+
+            # Inspect mode: show fields and exit
+            if args.inspect:
+                inspect_shapefile(shp_path)
+                continue
+
+            # Parse
+            districts = parse_shapefile_districts(
+                shp_path, fips, src["expected_districts"], src["district_field_candidates"]
+            )
+
         if districts is None:
             return 1
 

@@ -131,6 +131,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             cspan_id TEXT,
             lis_id TEXT,
 
+            lost_primary INTEGER DEFAULT 0,
+            primary_loss_cycle INTEGER,
+            primary_loss_date TEXT,
+
             FOREIGN KEY (state_code) REFERENCES states(code)
         )
     """)

@@ -4,13 +4,15 @@ Fetch official state-published redistricting boundaries and merge new
 congressional district maps into DistrictData.json.
 
 A wave of mid-decade redistricting enacted new maps for the 2026 elections
-(CA, TX, FL, MO, NC, OH, TN, UT) that Census TIGERweb hasn't picked up yet,
-so this script pulls the authoritative geometry directly from state sources.
+(CA, TX, FL, MO, NC, OH, TN, UT, LA, AL) that Census TIGERweb hasn't picked
+up yet, so this script pulls the authoritative geometry directly from state
+sources.
 
 Each entry in SOURCES has a "source_type":
-  - "shapefile" (default): download a zip and read it with pyshp (CA, TX, FL, MO).
+  - "shapefile" (default): download a zip and read it with pyshp (CA, TX, FL, MO, LA).
   - "arcgis": query an ArcGIS feature/map service layer as WGS84 GeoJSON
-    (NC, OH, TN, UT) -- for states that only publish their map via ArcGIS.
+    (NC, OH, TN, UT, AL) -- for states that only publish their map via ArcGIS
+    (or, for AL, whose SOS download server has a broken TLS chain).
 
 Usage:
     python3 scripts/update_redistricting.py                  # Update all configured states
@@ -107,19 +109,36 @@ SOURCES = {
         "plan_name": "UT_2026_MAP1A",
         "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO"],
     },
-    # Louisiana (FIPS 22) enacted a new map in late May 2026 after Louisiana v.
-    # Callais (SCOTUS, Apr 29 2026), eliminating one majority-Black district. The
-    # authoritative shapefile was not yet published at redist.legis.la.gov as of
-    # 2026-06-02 (site still tops out at 2024 Act 2 / SB8). Add an "arcgis"/"shapefile"
-    # entry here once the enacted plan is posted.
-    #
-    # Alabama (FIPS 01) is intentionally NOT listed: as of 2026-06-02 a three-judge
-    # panel has enjoined the state's switch to the 2023 map, so boundaries are unsettled.
+    "22": {  # Louisiana -- Act 2 (SB121), 2026 Regular Session, signed May 29 2026
+        # after Louisiana v. Callais (SCOTUS, Apr 29 2026); eliminates one
+        # majority-Black district. Official shapefile posted at redist.legis.la.gov
+        # on 2026-06-02.
+        "source_type": "shapefile",
+        "url": "https://redist.legis.la.gov/2026_Files/Act2Congress/Shapefile/Shapefile%20-%20Act_2_(2026_RS).zip",
+        "expected_districts": 6,
+        "plan_name": "LA_ACT2_2026",
+        "district_field_candidates": ["DISTRICT", "DISTRICT_I", "DISTRICTID", "DIST", "CD", "DISTRICTNO"],
+    },
+    "01": {  # Alabama -- Livingston Congressional Plan 3 (Act 2023-563), reinstated
+        # for 2026 by SCOTUS order Jun 2 2026 lifting the Milligan injunction
+        # (merits litigation continues below under the Callais standard).
+        # The SOS zip (sos.alabama.gov .../06-03-2026/2023_CONGRESSIONAL_PLAN.zip)
+        # serves an incomplete TLS chain that urllib rejects, so query the state's
+        # ALGeoHub feature service instead ("2023_CONG_LEGISLATIVE_PLAN" = the
+        # legislature's plan, distinct from "2023_Court_Ordered_Congressional_Plan").
+        "source_type": "arcgis",
+        "url": "https://services7.arcgis.com/jF2q3LPxL7PETdYk/arcgis/rest/services/2023_CONG_LEGISLATIVE_PLAN/FeatureServer/0",
+        "expected_districts": 7,
+        "plan_name": "AL_LIVINGSTON3_2023",
+        "district_field_candidates": ["DISTRICT", "DIST", "CD", "DISTRICTNO"],
+    },
 }
 
 FIPS_TO_STATE = {
+    "01": "AL",
     "06": "CA",
     "12": "FL",
+    "22": "LA",
     "29": "MO",
     "37": "NC",
     "39": "OH",
@@ -130,8 +149,10 @@ FIPS_TO_STATE = {
 
 # Bounding boxes for coordinate validation [min_lat, max_lat, min_lon, max_lon]
 STATE_BOUNDS = {
+    "01": (30.1, 35.1, -88.6, -84.8),      # Alabama
     "06": (32.0, 42.5, -125.0, -114.0),   # California
     "12": (24.4, 31.1, -87.7, -79.9),      # Florida
+    "22": (28.8, 33.1, -94.1, -88.7),      # Louisiana
     "29": (35.9, 40.7, -95.8, -89.0),      # Missouri
     "37": (33.7, 36.6, -84.4, -75.4),      # North Carolina
     "39": (38.3, 42.1, -84.9, -80.5),      # Ohio

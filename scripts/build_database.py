@@ -134,6 +134,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             lost_primary INTEGER DEFAULT 0,
             primary_loss_cycle INTEGER,
             primary_loss_date TEXT,
+            primary_winner_candidate_id TEXT,
 
             FOREIGN KEY (state_code) REFERENCES states(code)
         )
@@ -514,6 +515,30 @@ def create_schema(conn: sqlite3.Connection) -> None:
             military_years TEXT,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
+        )
+    """)
+
+    # Primary winners (party nominees) per race. Kept SEPARATE from
+    # race_candidates because import_fec_candidates.py drops and rebuilds the
+    # election_races / race_candidates tables on every run -- manually-curated
+    # winner flags stored there would be wiped. Maintained by
+    # log_primary_loss.py; join to race_candidates at runtime on
+    # (race_id, candidate_id). Intentionally no FK to election_races so the
+    # FEC reimport's DROP TABLE doesn't conflict.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS primary_winners (
+            race_id TEXT NOT NULL,
+            party TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            election_cycle INTEGER NOT NULL,
+            won_date TEXT,
+            decided_by TEXT,
+            note TEXT,
+
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+            PRIMARY KEY (race_id, party)
         )
     """)
 

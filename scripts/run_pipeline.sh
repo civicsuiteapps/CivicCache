@@ -17,6 +17,25 @@ LOG_FILE="$LOG_DIR/${TIER}-${TIMESTAMP}.log"
 
 mkdir -p "$LOG_DIR"
 
+# --- single-run lock -------------------------------------------------------
+# SQLite is single-writer; two overlapping pipeline runs (launchd + a manual
+# or CacheStatus-button run) produce `database is locked` failures. mkdir is
+# atomic, so it serves as a portable lock; a dead pid means a stale lock.
+LOCK_DIR="$PROJECT_DIR/data/.pipeline.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    OTHER_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
+    # ps -p (not kill -0): kill -0 returns EPERM for live processes we can't
+    # signal, which would misclassify them as stale.
+    if [ -n "$OTHER_PID" ] && ps -p "$OTHER_PID" > /dev/null 2>&1; then
+        echo "Another pipeline run (pid $OTHER_PID) is in progress -- exiting."
+        exit 75  # EX_TEMPFAIL
+    fi
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR"
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 # Source .env for API keys
 if [ -f "$PROJECT_DIR/.env" ]; then
     set -a
@@ -32,15 +51,22 @@ echo "" | tee -a "$LOG_FILE"
 
 # Run the pipeline
 EXIT_CODE=0
-python3 "$PROJECT_DIR/scripts/update.py" "$TIER" --json >> "$LOG_FILE" 2>&1 || EXIT_CODE=$?
+# --workers 1 serializes the writers: intra-run lock contention (7 parallel
+# stages against single-writer SQLite) caused intermittent failures, and an
+# unattended overnight run does not care about wall-clock time.
+python3 "$PROJECT_DIR/scripts/update.py" "$TIER" --json --workers 1 >> "$LOG_FILE" 2>&1 || EXIT_CODE=$?
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo "Pipeline failed with exit code $EXIT_CODE" | tee -a "$LOG_FILE"
-    # macOS notification on failure
-    osascript -e "display notification \"$TIER pipeline failed (exit $EXIT_CODE)\" with title \"CivicCache\" sound name \"Basso\"" 2>/dev/null || true
 else
     echo "Pipeline completed successfully" >> "$LOG_FILE"
 fi
+
+# Material-change digest: writes status.json for the CacheStatus menu-bar app
+# and pushes ntfy/Notification Center alerts (incl. pipeline failure). Runs
+# even when the pipeline failed -- that failure is itself the notification.
+python3 "$PROJECT_DIR/scripts/digest.py" --tier "$TIER" --pipeline-exit "$EXIT_CODE" >> "$LOG_FILE" 2>&1 \
+    || echo "digest failed (non-fatal)" | tee -a "$LOG_FILE"
 
 # Prune logs older than 30 days
 find "$LOG_DIR" -name "*.log" -mtime +30 -delete 2>/dev/null || true

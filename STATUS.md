@@ -1,8 +1,23 @@
 # CivicCache Project Status
 
-**Last Updated**: June 2, 2026
+**Last Updated**: July 6, 2026
 
 ## 📅 Recent Changes
+
+### July 6, 2026
+- Refactored pipeline runner to use shared cachecore framework (~/GIT/cachecore)
+- Extracted pipeline execution logic from update.py into generic cachecore.runner module
+  - Moved stage resolution, dependency resolution, parallel execution to cachecore
+  - CivicCache now maintains only stage definitions and snapshot functions
+- Enhanced run_pipeline.sh with single-run locking to prevent concurrent writes to SQLite
+  - Uses mkdir atomic lock with pid tracking to detect stale locks
+  - Serializes pipeline execution (--workers 1) to avoid single-writer contention
+  - Removed macOS notification on failure (now handled by digest.py)
+- Created new digest.py script for material-change reporting
+  - Writes status.json for CacheStatus menu-bar app
+  - Sends ntfy/Notification Center alerts for pipeline failures
+  - Captures run metadata from last_run.json
+- Created reconcile_room_schema.py utility for room schema verification
 
 ### June 2, 2026
 - Enhanced build_database.py: Improved incremental database build process with better error handling

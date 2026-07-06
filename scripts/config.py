@@ -7,7 +7,16 @@ always take precedence; the .env file fills in anything still missing.
 """
 
 import os
+import sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# cachecore (shared pipeline framework across the Cache projects)
+# ---------------------------------------------------------------------------
+
+_CACHECORE = Path.home() / "GIT" / "cachecore"
+if _CACHECORE.exists() and str(_CACHECORE) not in sys.path:
+    sys.path.insert(0, str(_CACHECORE))
 
 # ---------------------------------------------------------------------------
 # Paths

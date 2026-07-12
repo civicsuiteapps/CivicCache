@@ -847,11 +847,11 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_office ON candidates(office)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_state ON candidates(office_state)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_party ON candidates(party_code)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_cycle ON candidates(election_cycle)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_cycle_office ON candidates(election_cycle, office, office_state)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_races_cycle ON election_races(election_cycle)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_races_incumbent ON election_races(incumbent_bioguide_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_race_cand_race ON race_candidates(race_id)")
+    # race_id lookups are covered by the (race_id, candidate_id) primary key
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_race_cand_candidate ON race_candidates(candidate_id, election_cycle)")
 
     conn.commit()
 

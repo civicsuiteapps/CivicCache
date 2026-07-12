@@ -82,8 +82,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
     """)
 
     # Create indexes
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_committees_chamber ON congressional_committees(chamber)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_committees_parent ON congressional_committees(parent_committee_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cong_committees_chamber ON congressional_committees(chamber)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cong_committees_parent ON congressional_committees(parent_committee_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_assignments_member ON member_committee_assignments(member_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_assignments_committee ON member_committee_assignments(committee_id)")
 

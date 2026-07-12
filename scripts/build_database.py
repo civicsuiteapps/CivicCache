@@ -715,7 +715,6 @@ def create_indexes(conn: sqlite3.Connection) -> None:
     indexes = [
         # congress_members
         "CREATE INDEX IF NOT EXISTS idx_members_chamber ON congress_members(chamber)",
-        "CREATE INDEX IF NOT EXISTS idx_members_state ON congress_members(state_code)",
         "CREATE INDEX IF NOT EXISTS idx_members_party ON congress_members(current_party)",
         "CREATE INDEX IF NOT EXISTS idx_members_district ON congress_members(state_code, district)",
 
@@ -723,13 +722,13 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_candidates_office ON candidates(office)",
         "CREATE INDEX IF NOT EXISTS idx_candidates_state ON candidates(office_state)",
         "CREATE INDEX IF NOT EXISTS idx_candidates_party ON candidates(party_code)",
-        "CREATE INDEX IF NOT EXISTS idx_candidates_cycle ON candidates(election_cycle)",
         "CREATE INDEX IF NOT EXISTS idx_candidates_cycle_office ON candidates(election_cycle, office, office_state)",
 
         # election_races / race_candidates
+        # (race_id lookups are covered by the (race_id, candidate_id) primary key)
         "CREATE INDEX IF NOT EXISTS idx_races_cycle ON election_races(election_cycle)",
         "CREATE INDEX IF NOT EXISTS idx_races_incumbent ON election_races(incumbent_bioguide_id)",
-        "CREATE INDEX IF NOT EXISTS idx_race_cand_race ON race_candidates(race_id)",
+        "CREATE INDEX IF NOT EXISTS idx_race_cand_candidate ON race_candidates(candidate_id, election_cycle)",
 
         # committees (FEC)
         "CREATE INDEX IF NOT EXISTS idx_committees_type ON committees(committee_type)",
@@ -737,12 +736,12 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_committees_state ON committees(state)",
 
         # candidate_committee_linkages
-        "CREATE INDEX IF NOT EXISTS idx_linkages_candidate ON candidate_committee_linkages(candidate_id)",
+        "CREATE INDEX IF NOT EXISTS idx_linkages_candidate ON candidate_committee_linkages(candidate_id, election_year)",
         "CREATE INDEX IF NOT EXISTS idx_linkages_committee ON candidate_committee_linkages(committee_id)",
 
-        # legislation
-        "CREATE INDEX IF NOT EXISTS idx_legislation_congress ON legislation(congress)",
+        # legislation (congress-only lookups are covered by idx_legislation_session)
         "CREATE INDEX IF NOT EXISTS idx_legislation_type ON legislation(bill_type)",
+        "CREATE INDEX IF NOT EXISTS idx_legislation_status ON legislation(status)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_policy ON legislation(policy_area)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_law ON legislation(is_law)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_date ON legislation(introduced_date)",
@@ -758,18 +757,18 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_subjects_name ON legislation_subjects(subject_name)",
 
         # roll_call_votes / member_votes
-        "CREATE INDEX IF NOT EXISTS idx_votes_congress ON roll_call_votes(congress)",
+        # (congress-only lookups are covered by idx_votes_session; no query
+        # filters member_votes by vote_position alone)
         "CREATE INDEX IF NOT EXISTS idx_votes_chamber ON roll_call_votes(chamber)",
         "CREATE INDEX IF NOT EXISTS idx_votes_session ON roll_call_votes(congress, session)",
         "CREATE INDEX IF NOT EXISTS idx_votes_date ON roll_call_votes(vote_date)",
         "CREATE INDEX IF NOT EXISTS idx_votes_legislation ON roll_call_votes(legislation_id)",
         "CREATE INDEX IF NOT EXISTS idx_member_votes_roll ON member_votes(roll_call_id)",
         "CREATE INDEX IF NOT EXISTS idx_member_votes_bioguide ON member_votes(bioguide_id)",
-        "CREATE INDEX IF NOT EXISTS idx_member_votes_position ON member_votes(vote_position)",
 
         # congressional_staff
-        "CREATE INDEX IF NOT EXISTS idx_staff_member ON congressional_staff(member_bioguide_id)",
-        "CREATE INDEX IF NOT EXISTS idx_staff_committee ON congressional_staff(committee_code)",
+        "CREATE INDEX IF NOT EXISTS idx_staff_member ON congressional_staff(member_bioguide_id, is_current)",
+        "CREATE INDEX IF NOT EXISTS idx_staff_committee ON congressional_staff(committee_code, is_current)",
         "CREATE INDEX IF NOT EXISTS idx_staff_name ON congressional_staff(last_name, first_name)",
         "CREATE INDEX IF NOT EXISTS idx_staff_title ON congressional_staff(title_normalized)",
         "CREATE INDEX IF NOT EXISTS idx_staff_congress ON congressional_staff(congress_number)",
@@ -794,11 +793,10 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_cand_top_contrib ON candidate_top_contributors(candidate_id, election_cycle)",
 
         # congressional_districts / district_demographics
+        # (district_demographics geoid lookups are covered by its primary key)
         "CREATE INDEX IF NOT EXISTS idx_districts_state_district ON congressional_districts(state_code, district_number)",
         "CREATE INDEX IF NOT EXISTS idx_districts_fips ON congressional_districts(state_fips)",
         "CREATE INDEX IF NOT EXISTS idx_districts_geoid ON congressional_districts(geoid)",
-        "CREATE INDEX IF NOT EXISTS idx_districts_bbox ON congressional_districts(bbox)",
-        "CREATE INDEX IF NOT EXISTS idx_demographics_geoid ON district_demographics(geoid)",
 
         # zip_districts
         "CREATE INDEX IF NOT EXISTS idx_zip_districts_zip ON zip_districts(zip_code)",

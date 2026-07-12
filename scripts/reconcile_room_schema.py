@@ -288,6 +288,14 @@ def reconcile(conn, schema: dict) -> None:
         raise
     # VACUUM cannot run inside a transaction; reclaim space from the rewrites.
     conn.execute("VACUUM")
+    # External-content FTS indexes ship empty from the import pipeline (a bulk
+    # load never triggers them), and VACUUM may renumber the rowids they key
+    # on. Rebuild them here — after VACUUM — so every shipped DB carries a
+    # valid, rowid-aligned index for the apps' FTS search.
+    for fts in ("legislation_fts", "legislation_summaries_fts"):
+        if table_exists(conn, fts):
+            conn.execute(f"INSERT INTO {_q(fts)}({_q(fts)}) VALUES('rebuild')")
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------

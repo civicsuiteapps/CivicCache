@@ -449,8 +449,9 @@ def create_indexes(conn: sqlite3.Connection) -> None:
     print("="*60)
 
     indexes = [
-        "CREATE INDEX IF NOT EXISTS idx_legislation_congress ON legislation(congress)",
+        "CREATE INDEX IF NOT EXISTS idx_legislation_session ON legislation(congress, session)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_type ON legislation(bill_type)",
+        "CREATE INDEX IF NOT EXISTS idx_legislation_status ON legislation(status)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_policy ON legislation(policy_area)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_law ON legislation(is_law)",
         "CREATE INDEX IF NOT EXISTS idx_legislation_date ON legislation(introduced_date)",
@@ -482,6 +483,42 @@ def create_indexes(conn: sqlite3.Connection) -> None:
 
     conn.commit()
     print("\n✓ All indexes created")
+
+
+# Bill-stage taxonomy shared with the CivicScope apps. Precedence matters:
+# first matching WHEN wins, mirroring the classification the iOS app used to
+# compute at query time (CivicCacheManager getBillStatusStatistics). The apps
+# read this column directly, so any change here must stay in sync with them.
+STATUS_CASE_SQL = """
+    CASE
+        WHEN is_law = 1 THEN 'Became Law'
+        WHEN latest_action_text LIKE '%Became Public Law%' THEN 'Became Law'
+        WHEN latest_action_text LIKE '%Signed by President%' THEN 'Signed by President'
+        WHEN latest_action_text LIKE '%Presented to President%' THEN 'Presented to President'
+        WHEN latest_action_text LIKE '%agreed to%Senate%' OR latest_action_text LIKE '%Passed Senate%' OR latest_action_text LIKE '%Passed/Agreed to in Senate%' THEN 'Passed Senate'
+        WHEN latest_action_text LIKE '%agreed to%House%' OR latest_action_text LIKE '%Passed House%' OR latest_action_text LIKE '%Passed/Agreed to in House%' OR latest_action_text LIKE '%Motion to reconsider laid on the table%' THEN 'Passed House'
+        WHEN latest_action_text LIKE '%Received in the Senate%' OR latest_action_text LIKE '%Message on Senate action%' OR latest_action_text LIKE '%Received in the House%' THEN 'Received in Other Chamber'
+        WHEN latest_action_text LIKE '%Held at the desk%' THEN 'Held at Desk'
+        WHEN latest_action_text LIKE '%Hearings%' OR latest_action_text LIKE '%Hearing%' THEN 'Committee Hearing'
+        WHEN latest_action_text LIKE '%Forwarded%Subcommittee%' OR latest_action_text LIKE '%Mark-up%' THEN 'Committee Markup'
+        WHEN latest_action_text LIKE '%Reported%' OR latest_action_text LIKE '%Ordered to be Reported%' THEN 'Reported from Committee'
+        WHEN latest_action_text LIKE '%Referred to%' THEN 'Referred to Committee'
+        WHEN latest_action_text LIKE '%Introduced%' OR latest_action_text LIKE '%Sponsor introductory%' THEN 'Introduced'
+        ELSE 'Other'
+    END
+"""
+
+
+def update_status_column(conn: sqlite3.Connection) -> None:
+    """Materialize the bill-stage classification into legislation.status."""
+    print("\nClassifying bill status from latest_action_text...")
+    conn.execute(f"UPDATE legislation SET status = {STATUS_CASE_SQL}")
+    conn.commit()
+    rows = conn.execute(
+        "SELECT status, COUNT(*) FROM legislation GROUP BY status ORDER BY 2 DESC"
+    ).fetchall()
+    for status, count in rows:
+        print(f"  {status}: {count:,}")
 
 
 def update_metadata(conn: sqlite3.Connection, stats: Dict[str, int]) -> None:
@@ -596,6 +633,9 @@ def main():
 
         # Create indexes
         create_indexes(conn)
+
+        # Materialize bill-stage classification (apps query this column)
+        update_status_column(conn)
 
         # Update metadata
         update_metadata(conn, stats)

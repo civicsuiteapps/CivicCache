@@ -1,8 +1,23 @@
 # CivicCache Project Status
 
-**Last Updated**: July 6, 2026
+**Last Updated**: July 12, 2026
 
 ## 📅 Recent Changes
+
+### July 12, 2026
+- Optimized database indexes for improved query performance
+  - Removed redundant single-column indexes covered by composite keys
+  - Consolidated indexes to match actual query patterns across all scripts
+  - Added selective filtering to staff and linkage indexes (is_current, election_year)
+  - Renamed congressional committee indexes with cong_ prefix for clarity
+- Materialized bill-stage classification into legislation.status column
+  - Implements STATUS_CASE_SQL taxonomy shared with CivicScope apps
+  - Ensures database classification matches iOS client's getBillStatusStatistics behavior
+  - Covers full pipeline from 'Introduced' through 'Became Law' with intermediate stages
+- Enhanced reconcile_room_schema.py with FTS index rebuild
+  - Explicitly rebuilds legislation_fts and legislation_summaries_fts after VACUUM
+  - Ensures shipped databases carry valid FTS indexes aligned with current rowids
+  - Fixes issue where bulk imports skip FTS trigger and VACUUM renumbers rowids
 
 ### July 6, 2026
 - Refactored pipeline runner to use shared cachecore framework (~/GIT/cachecore)

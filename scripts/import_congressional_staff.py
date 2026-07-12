@@ -2147,12 +2147,12 @@ class StaffDatabase:
         # Create indexes
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_staff_member
-            ON congressional_staff(member_bioguide_id)
+            ON congressional_staff(member_bioguide_id, is_current)
         """)
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_staff_committee
-            ON congressional_staff(committee_code)
+            ON congressional_staff(committee_code, is_current)
         """)
 
         cursor.execute("""

@@ -26,7 +26,12 @@ except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
     _CFG_FEC = Path("FEC-Bulk-Data")
 
-from utils import create_connection
+from utils import (
+    create_connection,
+    fetch_openfec_committee,
+    is_unresolved_committee_name,
+    upsert_committee_from_openfec,
+)
 
 DB_PATH = _CFG_DB
 FEC_DIR = _CFG_FEC
@@ -152,6 +157,70 @@ def aggregate_contributions(
         cand: {cmte: (vals[0], vals[1]) for cmte, vals in cmtes.items()}
         for cand, cmtes in agg.items()
     }
+
+
+def resolve_missing_committees(
+    conn: sqlite3.Connection,
+    agg: dict[str, dict[str, tuple[float, int]]],
+    cmte_info: dict[str, tuple[str, str | None]],
+    top_n: int,
+) -> int:
+    """Resolve committees absent from the local master via the FEC API.
+
+    Brand-new committees (common early in a cycle) lag the FEC bulk master
+    file by days to weeks; without this, their rows would ship with the raw
+    committee ID as the display name. Resolved committees are also upserted
+    into the committees table so detail lookups work offline.
+
+    Mutates cmte_info in place. Returns the number resolved.
+    """
+    missing: set[str] = set()
+    for committees in agg.values():
+        ranked = sorted(committees.items(), key=lambda x: x[1][0], reverse=True)[:top_n]
+        for cmte_id, _ in ranked:
+            existing = cmte_info.get(cmte_id)
+            if existing is None or is_unresolved_committee_name(existing[0], cmte_id):
+                missing.add(cmte_id)
+
+    if not missing:
+        return 0
+
+    print(f"\n  {len(missing)} ranked committee(s) not in local master; resolving via FEC API...")
+    resolved = 0
+    for cmte_id in sorted(missing):
+        info = fetch_openfec_committee(cmte_id)
+        if info and info.get("name"):
+            cmte_info[cmte_id] = (info["name"], info.get("committee_type"))
+            upsert_committee_from_openfec(conn, cmte_id, info)
+            resolved += 1
+            print(f"    {cmte_id} -> {info['name']}")
+        else:
+            print(f"    {cmte_id} -> UNRESOLVED (not found via API)")
+    conn.commit()
+    print(f"  Resolved {resolved}/{len(missing)} via FEC API")
+    return resolved
+
+
+def validate_committee_names(conn: sqlite3.Connection, cycle: int) -> int:
+    """Data gate: no row may ship with an empty or ID-shaped committee_name."""
+    rows = conn.execute(
+        """
+        SELECT candidate_id, rank, committee_id, committee_name
+        FROM candidate_top_contributors
+        WHERE election_cycle = ?
+          AND (committee_name IS NULL OR committee_name = ''
+               OR committee_name = committee_id
+               OR committee_name GLOB 'C[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]')
+        """,
+        (cycle,),
+    ).fetchall()
+    if rows:
+        print(f"\n  VALIDATION FAILED: {len(rows)} row(s) with unresolved committee names:")
+        for cand_id, rank, cmte_id, name in rows[:20]:
+            print(f"    {cand_id} rank {rank}: {cmte_id} -> '{name}'")
+        if len(rows) > 20:
+            print(f"    ... and {len(rows) - 20} more")
+    return len(rows)
 
 
 def write_top_contributors(
@@ -294,6 +363,9 @@ def main() -> int:
         agg = aggregate_contributions(zip_path, known_candidates)
         print(f"  {len(agg):,} candidates have committee contributions")
 
+        # Resolve committees missing from the local master via FEC API
+        resolve_missing_committees(conn, agg, cmte_info, top_n)
+
         # Write top contributors
         print(f"\nWriting top {top_n} contributors per candidate...")
         row_count = write_top_contributors(conn, agg, cmte_info, cycle, top_n)
@@ -303,7 +375,16 @@ def main() -> int:
         update_metadata(conn, cycle, row_count)
         verify(conn, cycle)
 
+        # Data gate: raw committee IDs must never ship as display names
+        bad_rows = validate_committee_names(conn, cycle)
+
         conn.close()
+
+        if bad_rows:
+            print("\n" + "=" * 60)
+            print(f"IMPORT FAILED VALIDATION: {bad_rows} unresolved committee name(s)")
+            print("=" * 60)
+            return 1
 
         print("\n" + "=" * 60)
         print("IMPORT COMPLETE")

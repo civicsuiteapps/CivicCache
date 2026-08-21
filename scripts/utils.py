@@ -5,6 +5,8 @@ Deduplicated helper functions used across 14+ import scripts.
 """
 
 import json
+import os
+import re
 import sqlite3
 import time
 import urllib.error
@@ -93,6 +95,95 @@ def api_request(
             time.sleep(1)
 
     return None
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+FEC_COMMITTEE_ID_RE = re.compile(r"^C[0-9]{8}$")
+
+OPENFEC_BASE = "https://api.open.fec.gov/v1"
+
+
+def strip_html(text: Optional[str]) -> Optional[str]:
+    """Strip HTML tags from a string, collapsing leftover whitespace."""
+    if not text:
+        return text
+    plain = _HTML_TAG_RE.sub("", text)
+    return re.sub(r"\s+", " ", plain).strip()
+
+
+def fetch_openfec_committee(committee_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve a committee via the OpenFEC per-committee endpoint.
+
+    Used as a fallback when a committee is newer than the local FEC bulk
+    committee master snapshot. Requires OPENFEC_API_KEY in the environment.
+
+    Returns the committee result dict (name, committee_type, designation, ...)
+    or None if unset key / not found / API error.
+    """
+    api_key = os.environ.get("OPENFEC_API_KEY")
+    if not api_key:
+        return None
+
+    url = f"{OPENFEC_BASE}/committee/{committee_id}/?api_key={api_key}"
+    data = api_request(url)
+    if not data:
+        return None
+    results = data.get("results") or []
+    return results[0] if results else None
+
+
+def upsert_committee_from_openfec(
+    conn: sqlite3.Connection, committee_id: str, info: Dict[str, Any]
+) -> None:
+    """Insert/refresh a committees row from an OpenFEC committee result.
+
+    Keeps detail lookups working for committees missing from the bulk master.
+    """
+    conn.execute(
+        """
+        INSERT INTO committees (
+            committee_id, committee_name, committee_type, committee_type_full,
+            committee_designation, committee_designation_full,
+            party_code, party_full_name, connected_org_name, treasurer_name,
+            street_1, street_2, city, state, zip, filing_frequency
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(committee_id) DO UPDATE SET
+            committee_name = excluded.committee_name,
+            committee_type = excluded.committee_type,
+            committee_type_full = excluded.committee_type_full,
+            committee_designation = excluded.committee_designation,
+            committee_designation_full = excluded.committee_designation_full,
+            party_code = excluded.party_code,
+            party_full_name = excluded.party_full_name,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            committee_id,
+            info.get("name") or committee_id,
+            info.get("committee_type") or "",
+            info.get("committee_type_full") or "",
+            info.get("designation") or "",
+            info.get("designation_full") or "",
+            info.get("party") or "",
+            info.get("party_full") or "",
+            info.get("affiliated_committee_name") or "",
+            info.get("treasurer_name") or "",
+            (info.get("street_1") or ""),
+            (info.get("street_2") or ""),
+            (info.get("city") or ""),
+            (info.get("state") or ""),
+            (info.get("zip") or ""),
+            info.get("filing_frequency") or "",
+        ),
+    )
+
+
+def is_unresolved_committee_name(name: Optional[str], committee_id: str = "") -> bool:
+    """True when a display name is empty, the raw committee ID, or ID-shaped."""
+    if not name or not name.strip():
+        return True
+    name = name.strip()
+    return name == committee_id or bool(FEC_COMMITTEE_ID_RE.match(name))
 
 
 def download_image(

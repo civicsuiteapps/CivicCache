@@ -403,6 +403,38 @@ def run_health_check(json_output: bool = False) -> int:
     except Exception as e:
         _check("fk_integrity", False, str(e))
 
+    # 6. Contributor display names resolved (no raw FEC committee IDs or
+    #    empty strings shipping as reader-facing names)
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM candidate_top_contributors "
+            "WHERE committee_name IS NULL OR committee_name = '' "
+            "   OR committee_name = committee_id "
+            "   OR committee_name GLOB 'C[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'"
+        ).fetchone()[0]
+        _check("candidate_contributor_names", n == 0, f"{n} unresolved" if n else "all resolved")
+    except Exception as e:
+        _check("candidate_contributor_names", False, str(e))
+
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM member_top_contributors "
+            "WHERE contributor_name IS NULL OR contributor_name = '' "
+            "   OR contributor_name GLOB 'C[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'"
+        ).fetchone()[0]
+        _check("member_contributor_names", n == 0, f"{n} unresolved" if n else "all resolved")
+    except Exception as e:
+        _check("member_contributor_names", False, str(e))
+
+    # 7. No raw HTML markup in reader-facing attribution text
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM congress_members WHERE depiction_attribution LIKE '%<%'"
+        ).fetchone()[0]
+        _check("attribution_plain_text", n == 0, f"{n} rows with HTML" if n else "clean")
+    except Exception as e:
+        _check("attribution_plain_text", False, str(e))
+
     conn.close()
 
     # Output

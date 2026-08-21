@@ -764,8 +764,89 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
 # ---------------------------------------------------------------------------
 
 
+# Columns on race_candidates that are populated by LATER pipeline stages
+# (candidate_photos, campaign_sites, google_civic) or accumulate across runs.
+# They must survive this script's DROP/recreate of race_candidates, so
+# ensure_tables() snapshots them first and restore_enrichment() merges them
+# back after Phase 4 repopulates the table.
+ENRICHMENT_COLUMNS = [
+    "image_url", "image_blob", "campaign_url", "campaign_phone",
+    "campaign_email", "photo_url", "social_facebook", "social_twitter",
+    "social_youtube", "profession", "education", "birthplace", "religion",
+    "military_branch", "military_years",
+]
+
+_ENRICHMENT_SNAPSHOT = "_race_candidates_enrichment"
+
+
+def snapshot_enrichment(conn: sqlite3.Connection) -> int:
+    """Copy enrichment columns aside before race_candidates is dropped.
+
+    Only columns that exist in the current table are captured (tolerates an
+    older schema). Returns the number of rows snapshotted.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='race_candidates'"
+    ).fetchone()
+    conn.execute(f"DROP TABLE IF EXISTS {_ENRICHMENT_SNAPSHOT}")
+    if not exists:
+        return 0
+
+    present = {r[1] for r in conn.execute("PRAGMA table_info(race_candidates)")}
+    cols = [c for c in ENRICHMENT_COLUMNS if c in present]
+    if not cols:
+        return 0
+
+    col_list = ", ".join(cols)
+    not_null = " OR ".join(f"{c} IS NOT NULL" for c in cols)
+    conn.execute(
+        f"CREATE TABLE {_ENRICHMENT_SNAPSHOT} AS "
+        f"SELECT race_id, candidate_id, {col_list} "
+        f"FROM race_candidates WHERE {not_null}"
+    )
+    count = conn.execute(f"SELECT COUNT(*) FROM {_ENRICHMENT_SNAPSHOT}").fetchone()[0]
+    print(f"  Snapshotted enrichment data for {count:,} race_candidates rows")
+    return count
+
+
+def restore_enrichment(conn: sqlite3.Connection) -> int:
+    """Merge snapshotted enrichment back into the rebuilt race_candidates.
+
+    Freshly-imported values win (COALESCE); the snapshot only fills gaps.
+    Rows whose (race_id, candidate_id) no longer exist are dropped naturally.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (_ENRICHMENT_SNAPSHOT,),
+    ).fetchone()
+    if not exists:
+        return 0
+
+    snap_cols = {r[1] for r in conn.execute(f"PRAGMA table_info({_ENRICHMENT_SNAPSHOT})")}
+    cols = [c for c in ENRICHMENT_COLUMNS if c in snap_cols]
+    if cols:
+        sets = ", ".join(f"{c} = COALESCE(rc.{c}, e.{c})" for c in cols)
+        conn.execute(
+            f"UPDATE race_candidates AS rc SET {sets} "
+            f"FROM {_ENRICHMENT_SNAPSHOT} AS e "
+            f"WHERE e.race_id = rc.race_id AND e.candidate_id = rc.candidate_id"
+        )
+    restored = conn.execute(
+        f"SELECT COUNT(*) FROM race_candidates rc "
+        f"JOIN {_ENRICHMENT_SNAPSHOT} e "
+        f"ON e.race_id = rc.race_id AND e.candidate_id = rc.candidate_id"
+    ).fetchone()[0]
+    conn.execute(f"DROP TABLE {_ENRICHMENT_SNAPSHOT}")
+    conn.commit()
+    print(f"  Restored enrichment data for {restored:,} race_candidates rows")
+    return restored
+
+
 def ensure_tables(conn: sqlite3.Connection) -> None:
     """Create tables if they don't exist (idempotent)."""
+
+    # Preserve photo/campaign/civic enrichment across the rebuild
+    snapshot_enrichment(conn)
 
     # Drop and recreate candidates (existing data is garbage)
     conn.execute("DROP TABLE IF EXISTS race_candidates")
@@ -824,6 +905,9 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # MUST stay column-identical to build_database.py's race_candidates (and
+    # the Room schema the Android app validates against) — later pipeline
+    # stages write the enrichment columns and fail if any are missing.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS race_candidates (
             race_id TEXT NOT NULL,
@@ -838,6 +922,19 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
             principal_committee_id TEXT,
             image_url TEXT,
             image_blob BLOB,
+            campaign_url TEXT,
+            campaign_phone TEXT,
+            campaign_email TEXT,
+            photo_url TEXT,
+            social_facebook TEXT,
+            social_twitter TEXT,
+            social_youtube TEXT,
+            profession TEXT,
+            education TEXT,
+            birthplace TEXT,
+            religion TEXT,
+            military_branch TEXT,
+            military_years TEXT,
             PRIMARY KEY (race_id, candidate_id),
             FOREIGN KEY (race_id) REFERENCES election_races(race_id)
         )
@@ -946,6 +1043,10 @@ def main() -> int:
         # Phase 4: Populate race_candidates
         print("\n--- Phase 4: Race Candidates ---")
         rc_count = populate_race_candidates(conn, cycles)
+
+        # Phase 4.5: Merge back enrichment preserved across the rebuild
+        print("\n--- Phase 4.5: Restore Enrichment ---")
+        restore_enrichment(conn)
 
         # Rebuild FTS
         print("\n  Rebuilding candidates FTS...")

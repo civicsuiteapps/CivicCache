@@ -26,7 +26,12 @@ except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
     _CFG_FEC = Path("FEC-Bulk-Data")
 
-from utils import create_connection
+from utils import (
+    create_connection,
+    fetch_openfec_committee,
+    is_unresolved_committee_name,
+    upsert_committee_from_openfec,
+)
 
 # Database location
 DB_PATH = _CFG_DB
@@ -499,27 +504,48 @@ def phase4_merge_and_write(conn: sqlite3.Connection,
     ).fetchall()
 
     total_contributors = 0
+    api_resolved: Dict[str, Optional[str]] = {}  # cmte_id -> name or None
+
+    def _resolve_pac_name(cmte_id: str) -> str:
+        """Committee display name, falling back to the FEC API for committees
+        newer than the local bulk master. Never lets a raw ID ship silently."""
+        name = cmte_names.get(cmte_id)
+        if name and not is_unresolved_committee_name(name, cmte_id):
+            return name
+        if cmte_id not in api_resolved:
+            info = fetch_openfec_committee(cmte_id)
+            if info and info.get("name"):
+                api_resolved[cmte_id] = info["name"]
+                cmte_names[cmte_id] = info["name"]
+                upsert_committee_from_openfec(conn, cmte_id, info)
+                print(f"    Resolved via FEC API: {cmte_id} -> {info['name']}")
+            else:
+                api_resolved[cmte_id] = None
+                print(f"    UNRESOLVED committee: {cmte_id} (not in master or API)")
+        return api_resolved[cmte_id] or cmte_id
 
     for bioguide_id, cycle in summary_rows:
         key = (bioguide_id, cycle)
 
         # Collect all contributors
-        contributors = []  # [(name, type, amount, count)]
+        contributors = []  # [(name_or_cmte_id, type, amount, count, cmte_id)]
 
-        # Add PAC contributors
+        # Add PAC contributors (names resolved lazily, only for ranked rows)
         if key in pac_agg:
             for cmte_id, (amount, count) in pac_agg[key].items():
-                name = cmte_names.get(cmte_id, cmte_id)
-                contributors.append((name, 'pac', amount, count))
+                contributors.append((cmte_id, 'pac', amount, count, cmte_id))
 
         # Add employer-aggregated individual contributors
         if key in emp_agg:
             for employer, (amount, count) in emp_agg[key].items():
-                contributors.append((employer.title(), 'employer', amount, count))
+                contributors.append((employer.title(), 'employer', amount, count, None))
 
         # Sort by amount descending and take top 10
         contributors.sort(key=lambda x: x[2], reverse=True)
-        top10 = contributors[:10]
+        top10 = [
+            (_resolve_pac_name(cmte_id) if cmte_id else name, ctype, amount, count)
+            for name, ctype, amount, count, cmte_id in contributors[:10]
+        ]
 
         # Write to member_top_contributors
         for rank, (name, ctype, amount, count) in enumerate(top10, 1):
@@ -548,6 +574,25 @@ def phase4_merge_and_write(conn: sqlite3.Connection,
     conn.commit()
     print(f"  Wrote {total_contributors:,} top contributor records")
     return total_contributors
+
+
+def validate_contributor_names(conn: sqlite3.Connection) -> int:
+    """Data gate: no PAC contributor may ship with an ID-shaped or empty name."""
+    rows = conn.execute(
+        """
+        SELECT bioguide_id, election_cycle, rank, contributor_name
+        FROM member_top_contributors
+        WHERE contributor_name IS NULL OR contributor_name = ''
+           OR contributor_name GLOB 'C[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+        """
+    ).fetchall()
+    if rows:
+        print(f"\n  VALIDATION FAILED: {len(rows)} member_top_contributors row(s) with unresolved names:")
+        for bid, cycle, rank, name in rows[:20]:
+            print(f"    {bid} cycle {cycle} rank {rank}: '{name}'")
+        if len(rows) > 20:
+            print(f"    ... and {len(rows) - 20} more")
+    return len(rows)
 
 
 # ============================================================
@@ -678,7 +723,16 @@ def main():
         update_metadata(conn, summary_count, contributor_count)
         verify_import(conn)
 
+        # Data gate: raw committee IDs must never ship as display names
+        bad_rows = validate_contributor_names(conn)
+
         conn.close()
+
+        if bad_rows:
+            print("\n" + "="*60)
+            print(f"IMPORT FAILED VALIDATION: {bad_rows} unresolved contributor name(s)")
+            print("="*60)
+            return 1
 
         print("\n" + "="*60)
         print("IMPORT COMPLETE")

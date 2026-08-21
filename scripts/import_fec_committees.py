@@ -12,6 +12,7 @@ This script:
 
 import csv
 import json
+import re
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -21,26 +22,71 @@ import tempfile
 import os
 
 try:
-    from config import DB_PATH as _CFG_DB
+    from config import DB_PATH as _CFG_DB, FEC_DIR as _CFG_FEC, CONGRESS_NUMBER
 except ImportError:
     _CFG_DB = Path("data/civic_cache.db")
+    _CFG_FEC = Path("FEC-Bulk-Data")
+    CONGRESS_NUMBER = 119
+
+# Even year closing the current congress (119 -> 2026)
+CURRENT_CYCLE = 2 * CONGRESS_NUMBER + 1788
 
 from utils import create_connection
 
 # Database location
 DB_PATH = _CFG_DB
 
-# Data directories
-COMMITTEE_DIR = Path("data/raw/fec/Committee-Master")
-LINKAGE_DIR = Path("data/raw/fec/Candidate-Committee-Linkages")
+# Data directories. FEC_DIR is the snapshot download_fec_bulk.py refreshes;
+# data/raw/fec is a legacy static copy kept only as a fallback.
+_LEGACY_COMMITTEE_DIR = Path("data/raw/fec/Committee-Master")
+_LEGACY_LINKAGE_DIR = Path("data/raw/fec/Candidate-Committee-Linkages")
+COMMITTEE_DIR = (
+    _CFG_FEC / "Committee-Master"
+    if (_CFG_FEC / "Committee-Master").exists()
+    else _LEGACY_COMMITTEE_DIR
+)
+LINKAGE_DIR = (
+    _CFG_FEC / "Candidate-Committee-Linkages"
+    if (_CFG_FEC / "Candidate-Committee-Linkages").exists()
+    else _LEGACY_LINKAGE_DIR
+)
+
+def _file_sort_key(path: Path) -> tuple:
+    """Sort key so the most recent data is imported last (and wins).
+
+    The same committee appears in many cycle files; imports use INSERT OR
+    REPLACE, so ordering by (cycle year, file mtime) ascending guarantees the
+    freshest record survives — e.g. a re-downloaded cm26.zip beats a stale
+    Committee-Master_2026.zip from an earlier snapshot.
+    """
+    years = [int(y) for y in re.findall(r"(?:19|20)\d{2}", path.name)]
+    if not years:
+        # Short FEC names like cm26.zip / ccl26.zip
+        m = re.match(r"^[a-z]+(\d{2})\.(?:zip|txt)$", path.name)
+        if m:
+            years = [2000 + int(m.group(1))]
+    return (max(years) if years else 0, path.stat().st_mtime, path.name)
+
+
+def iter_data_files(directory: Path) -> List[Path]:
+    """All .txt and .zip data files in a directory, oldest data first."""
+    files = [
+        p
+        for p in list(directory.glob("*.txt")) + list(directory.glob("*.zip"))
+        if "SPECIFICATION" not in p.name.upper()
+    ]
+    return sorted(files, key=_file_sort_key)
 
 
 
-def parse_committee_line(line: str) -> Optional[Dict[str, Any]]:
+def parse_committee_line(line: str, keep_terminated: bool = False) -> Optional[Dict[str, Any]]:
     """Parse a committee record from pipe-delimited format.
 
     Filters out terminated (T) and administratively terminated (A)
-    committees -- these have no current activity and bloat the table.
+    committees -- these have no current activity and bloat the table --
+    unless keep_terminated is set. Current-cycle files pass keep_terminated
+    because a committee that raised or spent money this cycle and then
+    terminated still needs a display name (e.g. a wound-down super PAC).
     """
     fields = line.strip().split('|')
 
@@ -57,7 +103,7 @@ def parse_committee_line(line: str) -> Optional[Dict[str, Any]]:
 
     # Skip terminated and administratively terminated committees
     filing_freq = fields[11].strip().upper()
-    if filing_freq in ('T', 'A'):
+    if filing_freq in ('T', 'A') and not keep_terminated:
         return None
 
     return {
@@ -144,108 +190,68 @@ def import_committees(conn: sqlite3.Connection) -> int:
     imported_count = 0
     skipped_count = 0
 
-    # Process txt files first
-    txt_files = list(COMMITTEE_DIR.glob("*.txt"))
-    print(f"Found {len(txt_files)} .txt files")
+    def _import_lines(f, keep_terminated: bool = False) -> None:
+        nonlocal imported_count, skipped_count
+        for line in f:
+            committee = parse_committee_line(line, keep_terminated=keep_terminated)
+            if not committee:
+                skipped_count += 1
+                continue
 
-    for txt_file in txt_files:
-        print(f"  Processing {txt_file.name}...")
-        with open(txt_file, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                committee = parse_committee_line(line)
-                if not committee:
-                    skipped_count += 1
-                    continue
+            try:
+                conn.execute("""
+                    INSERT OR REPLACE INTO committees (
+                        committee_id, committee_name, committee_type,
+                        committee_type_full, committee_designation,
+                        committee_designation_full, party_code, party_full_name,
+                        connected_org_name, treasurer_name, street_1, street_2,
+                        city, state, zip, filing_frequency
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    committee['committee_id'],
+                    committee['committee_name'],
+                    committee['committee_type'],
+                    get_committee_type_full(committee['committee_type']),
+                    committee['committee_designation'],
+                    get_committee_designation_full(committee['committee_designation']),
+                    committee['party_code'],
+                    get_party_full_name(committee['party_code']),
+                    committee['connected_org_name'],
+                    committee['treasurer_name'],
+                    committee['street_1'],
+                    committee['street_2'],
+                    committee['city'],
+                    committee['state'],
+                    committee['zip'],
+                    committee['filing_frequency']
+                ))
+                imported_count += 1
 
-                try:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO committees (
-                            committee_id, committee_name, committee_type,
-                            committee_type_full, committee_designation,
-                            committee_designation_full, party_code, party_full_name,
-                            connected_org_name, treasurer_name, street_1, street_2,
-                            city, state, zip, filing_frequency
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        committee['committee_id'],
-                        committee['committee_name'],
-                        committee['committee_type'],
-                        get_committee_type_full(committee['committee_type']),
-                        committee['committee_designation'],
-                        get_committee_designation_full(committee['committee_designation']),
-                        committee['party_code'],
-                        get_party_full_name(committee['party_code']),
-                        committee['connected_org_name'],
-                        committee['treasurer_name'],
-                        committee['street_1'],
-                        committee['street_2'],
-                        committee['city'],
-                        committee['state'],
-                        committee['zip'],
-                        committee['filing_frequency']
-                    ))
-                    imported_count += 1
+                if imported_count % 1000 == 0:
+                    print(f"    Imported {imported_count} committees...")
+                    conn.commit()
+            except sqlite3.IntegrityError:
+                skipped_count += 1
 
-                    if imported_count % 1000 == 0:
-                        print(f"    Imported {imported_count} committees...")
-                        conn.commit()
-                except sqlite3.IntegrityError as e:
-                    skipped_count += 1
+    data_files = iter_data_files(COMMITTEE_DIR)
+    print(f"Found {len(data_files)} data files (processing oldest cycle first)")
 
-    # Process zip files
-    zip_files = list(COMMITTEE_DIR.glob("*.zip"))
-    print(f"Found {len(zip_files)} .zip files")
-
-    for zip_file in zip_files:
-        print(f"  Processing {zip_file.name}...")
-        with zipfile.ZipFile(zip_file, 'r') as zf:
-            # Extract to temp directory
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zf.extractall(tmpdir)
-
-                # Process extracted files
-                for extracted_file in Path(tmpdir).glob("*.txt"):
-                    with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
-                        for line in f:
-                            committee = parse_committee_line(line)
-                            if not committee:
-                                skipped_count += 1
-                                continue
-
-                            try:
-                                conn.execute("""
-                                    INSERT OR REPLACE INTO committees (
-                                        committee_id, committee_name, committee_type,
-                                        committee_type_full, committee_designation,
-                                        committee_designation_full, party_code, party_full_name,
-                                        connected_org_name, treasurer_name, street_1, street_2,
-                                        city, state, zip, filing_frequency
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (
-                                    committee['committee_id'],
-                                    committee['committee_name'],
-                                    committee['committee_type'],
-                                    get_committee_type_full(committee['committee_type']),
-                                    committee['committee_designation'],
-                                    get_committee_designation_full(committee['committee_designation']),
-                                    committee['party_code'],
-                                    get_party_full_name(committee['party_code']),
-                                    committee['connected_org_name'],
-                                    committee['treasurer_name'],
-                                    committee['street_1'],
-                                    committee['street_2'],
-                                    committee['city'],
-                                    committee['state'],
-                                    committee['zip'],
-                                    committee['filing_frequency']
-                                ))
-                                imported_count += 1
-
-                                if imported_count % 1000 == 0:
-                                    print(f"    Imported {imported_count} committees...")
-                                    conn.commit()
-                            except sqlite3.IntegrityError:
-                                skipped_count += 1
+    for data_file in data_files:
+        # Displayed cycles (current + previous, matching member_fec_summary
+        # coverage) keep terminated committees (see parse_committee_line)
+        keep_terminated = _file_sort_key(data_file)[0] >= CURRENT_CYCLE - 2
+        print(f"  Processing {data_file.name}..."
+              + (" [keeping terminated]" if keep_terminated else ""))
+        if data_file.suffix == '.txt':
+            with open(data_file, 'r', encoding='utf-8', errors='ignore') as f:
+                _import_lines(f, keep_terminated)
+        else:
+            with zipfile.ZipFile(data_file, 'r') as zf:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zf.extractall(tmpdir)
+                    for extracted_file in Path(tmpdir).glob("*.txt"):
+                        with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            _import_lines(f, keep_terminated)
 
     conn.commit()
     print(f"\n✓ Imported {imported_count} committees (skipped {skipped_count} invalid/duplicate records)")
@@ -296,42 +302,48 @@ def import_linkages(conn: sqlite3.Connection) -> int:
     imported_count = 0
     skipped_count = 0
 
-    # Process zip files
-    zip_files = list(LINKAGE_DIR.glob("*.zip"))
-    print(f"Found {len(zip_files)} .zip files")
+    def _import_lines(f) -> None:
+        nonlocal imported_count, skipped_count
+        for line in f:
+            linkage = parse_linkage_line(line)
+            if not linkage:
+                skipped_count += 1
+                continue
 
-    for zip_file in zip_files:
-        print(f"  Processing {zip_file.name}...")
-        with zipfile.ZipFile(zip_file, 'r') as zf:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zf.extractall(tmpdir)
+            try:
+                conn.execute("""
+                    INSERT OR IGNORE INTO candidate_committee_linkages (
+                        candidate_id, committee_id, linkage_type, election_year
+                    ) VALUES (?, ?, ?, ?)
+                """, (
+                    linkage['candidate_id'],
+                    linkage['committee_id'],
+                    linkage['linkage_type'],
+                    linkage['election_year']
+                ))
+                imported_count += 1
 
-                for extracted_file in Path(tmpdir).glob("*.txt"):
-                    with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
-                        for line in f:
-                            linkage = parse_linkage_line(line)
-                            if not linkage:
-                                skipped_count += 1
-                                continue
+                if imported_count % 5000 == 0:
+                    print(f"    Imported {imported_count} linkages...")
+                    conn.commit()
+            except sqlite3.IntegrityError:
+                skipped_count += 1
 
-                            try:
-                                conn.execute("""
-                                    INSERT OR IGNORE INTO candidate_committee_linkages (
-                                        candidate_id, committee_id, linkage_type, election_year
-                                    ) VALUES (?, ?, ?, ?)
-                                """, (
-                                    linkage['candidate_id'],
-                                    linkage['committee_id'],
-                                    linkage['linkage_type'],
-                                    linkage['election_year']
-                                ))
-                                imported_count += 1
+    data_files = iter_data_files(LINKAGE_DIR)
+    print(f"Found {len(data_files)} data files")
 
-                                if imported_count % 5000 == 0:
-                                    print(f"    Imported {imported_count} linkages...")
-                                    conn.commit()
-                            except sqlite3.IntegrityError:
-                                skipped_count += 1
+    for data_file in data_files:
+        print(f"  Processing {data_file.name}...")
+        if data_file.suffix == '.txt':
+            with open(data_file, 'r', encoding='utf-8', errors='ignore') as f:
+                _import_lines(f)
+        else:
+            with zipfile.ZipFile(data_file, 'r') as zf:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zf.extractall(tmpdir)
+                    for extracted_file in Path(tmpdir).glob("*.txt"):
+                        with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            _import_lines(f)
 
     conn.commit()
     print(f"\n✓ Imported {imported_count} linkages (skipped {skipped_count} invalid/duplicate records)")

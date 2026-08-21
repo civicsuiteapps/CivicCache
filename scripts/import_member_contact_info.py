@@ -34,7 +34,7 @@ except ImportError:
                     key, value = line.split('=', 1)
                     os.environ.setdefault(key, value)
 
-from utils import create_connection, api_request
+from utils import create_connection, api_request, strip_html
 
 # Database location
 DB_PATH = _CFG_DB
@@ -139,9 +139,11 @@ def extract_congress_gov_data(member: Dict) -> Dict[str, Any]:
         'sponsored_bills_count': sponsored_count,
         'cosponsored_bills_count': cosponsored_count,
 
-        # Portrait
+        # Portrait. The API returns attribution as raw HTML anchor markup
+        # (e.g. '<a href="...">Courtesy U.S. Senate Historical Office</a>');
+        # only the plain text belongs in the DB.
         'depiction_url': depiction.get('imageUrl'),
-        'depiction_attribution': depiction.get('attribution'),
+        'depiction_attribution': strip_html(depiction.get('attribution')),
 
         # Nickname
         'nickname': nickname,

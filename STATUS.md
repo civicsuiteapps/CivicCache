@@ -1,8 +1,28 @@
 # CivicCache Project Status
 
-**Last Updated**: July 12, 2026
+**Last Updated**: August 21, 2026
 
 ## 📅 Recent Changes
+
+### August 21, 2026
+- Enhanced committee data quality and resolution pipeline
+  - Added OpenFEC API fallback for committees missing from bulk master snapshot
+  - New `fetch_openfec_committee()` utility resolves committees via API with caching to committees table
+  - Resolves top contributors with incomplete data early in electoral cycle (committees lag FEC bulk by days/weeks)
+  - Added `resolve_missing_committees()` function with ranked committee resolution (top N contributors only)
+- Implemented committee name validation gates
+  - New `validate_committee_names()` data gate ensures no raw FEC IDs or empty strings ship as display names
+  - Added `is_unresolved_committee_name()` utility to detect ID-shaped or empty committee names
+  - Enhanced `import_candidate_contributors.py` with automatic validation and reconciliation
+- Added HTML sanitization utilities
+  - New `strip_html()` function for cleaning HTML tags from text fields (attribution, descriptions)
+  - Compiled regex patterns for HTML and FEC committee ID detection
+  - Enables quality gates for reader-facing text fields
+- Enhanced health checks in update.py
+  - Check 6: Validate `candidate_top_contributors.committee_name` resolution (no raw IDs or empty values)
+  - Check 7: Validate `member_top_contributors.contributor_name` (no raw IDs)
+  - Check 8: Validate `congress_members.depiction_attribution` contains no HTML markup
+  - All checks support json output for pipeline monitoring
 
 ### July 12, 2026
 - Optimized database indexes for improved query performance

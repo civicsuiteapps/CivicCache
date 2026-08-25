@@ -1,8 +1,21 @@
 # CivicCache Project Status
 
-**Last Updated**: August 21, 2026
+**Last Updated**: August 24, 2026
 
 ## 📅 Recent Changes
+
+### August 24, 2026
+- Fixed GeoJSON format and FEC candidate race-building pipeline
+  - `import_district_boundaries.py`: Converted raw coordinate arrays to proper GeoJSON MultiPolygon format with [lng,lat] ordering and closed rings
+  - Corrected duplicate point tallying logic in boundary import
+  - `import_fec_candidates.py`: Added seat mapping and House district normalization (handles delegate code 98 → 00 for single-seat states)
+  - Implemented `_candidate_election_year_ok()` to filter FEC rolled-forward registrations (excludes candidates not actually running in the cycle)
+  - Refactored race building (Phase 3) to group candidates by canonical race key with proper incumbent verification via seat matching
+  - Fixed incumbent detection: moved from FEC's unreliable ICI code to seat-based validation (prevents House member Senate bids from marking false incumbents)
+  - `import_fec_committees.py`: Added `rebuild_committees_fts()` to keep FTS search in sync after committees table reimport
+  - `log_primary_loss.py`: Enhanced `upsert_primary_winner()` to validate candidate_id exists in race_candidates; adds guidance on FEC ID merges/retirements
+  - `update.py`: Expanded health checks with primary_winner_integrity, committees_fts_sync, race_districts_valid, and district_geojson_format validation gates
+  - All changes ship validation gates to prevent data quality regressions (GeoJSON, incumbent attribution, race-candidate joins)
 
 ### August 21, 2026
 - Enhanced committee data quality and resolution pipeline

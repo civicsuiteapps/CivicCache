@@ -350,6 +350,36 @@ def import_linkages(conn: sqlite3.Connection) -> int:
     return imported_count
 
 
+def rebuild_committees_fts(conn: sqlite3.Connection) -> None:
+    """Rebuild committees_fts so search stays in sync with the reimport.
+
+    The base import DELETEs and repopulates committees; without this the FTS
+    table silently goes stale (or empty) and app search misses committees.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='committees_fts'"
+    ).fetchone()
+    if not exists:
+        conn.execute("""
+            CREATE VIRTUAL TABLE committees_fts USING fts5(
+                committee_id UNINDEXED,
+                committee_name,
+                connected_org_name,
+                party_full_name
+            )
+        """)
+    else:
+        conn.execute("DELETE FROM committees_fts")
+    conn.execute("""
+        INSERT INTO committees_fts(committee_id, committee_name, connected_org_name, party_full_name)
+        SELECT committee_id, committee_name, connected_org_name, party_full_name
+        FROM committees
+    """)
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) FROM committees_fts").fetchone()[0]
+    print(f"\n✓ Rebuilt committees_fts ({count:,} rows)")
+
+
 def update_metadata(conn: sqlite3.Connection, committee_count: int, linkage_count: int) -> None:
     """Update database metadata."""
     print("\nUpdating metadata...")
@@ -445,6 +475,9 @@ def main():
 
         # Import linkages
         linkage_count = import_linkages(conn)
+
+        # Keep FTS in sync with the reimported committees
+        rebuild_committees_fts(conn)
 
         # Update metadata
         update_metadata(conn, committee_count, linkage_count)

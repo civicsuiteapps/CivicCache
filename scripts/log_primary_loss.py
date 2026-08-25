@@ -135,7 +135,13 @@ def upsert_primary_winner(
     decided_by: str,
     note: str = None,
 ) -> str:
-    """Record a party nominee in primary_winners; returns the party stored."""
+    """Record a party nominee in primary_winners; returns the party stored.
+
+    Refuses candidates with no race_candidates row: a winner that doesn't
+    join to the race is invisible in the apps and trips the build's
+    primary-winner integrity gate. If the FEC has retired/merged the ID,
+    find the surviving one in race_candidates first (--list the race).
+    """
     row = conn.execute(
         """
         SELECT party_code, candidate_name FROM race_candidates
@@ -143,7 +149,13 @@ def upsert_primary_winner(
         """,
         (race_id, candidate_id),
     ).fetchone()
-    party = row[0] if row else "UNK"
+    if row is None:
+        raise ValueError(
+            f"{candidate_id} has no race_candidates row for {race_id} — "
+            f"refusing to record a dangling winner. Check the race's "
+            f"candidates for the surviving FEC ID (IDs get merged/retired)."
+        )
+    party = row[0]
     conn.execute(
         """
         INSERT INTO primary_winners
@@ -304,9 +316,14 @@ def main() -> int:
                 return 1
             winner_id = matches[0][0]
         won_date = args.date or date.today().isoformat()
-        party = upsert_primary_winner(
-            conn, args.race, winner_id, args.cycle, won_date, args.decided_by, args.note
-        )
+        try:
+            party = upsert_primary_winner(
+                conn, args.race, winner_id, args.cycle, won_date, args.decided_by, args.note
+            )
+        except ValueError as e:
+            print(f"ERROR: {e}")
+            conn.close()
+            return 1
         conn.commit()
         print(
             f"Recorded {party} nominee for {args.race}: [{winner_id}] "
@@ -368,12 +385,14 @@ def main() -> int:
         ).fetchone()
         if row is None:
             print(
-                f"WARNING: {winner_id} not found in race_candidates for cycle "
-                f"{args.cycle} -- storing anyway."
+                f"ERROR: {winner_id} not found in race_candidates for cycle "
+                f"{args.cycle} -- refusing to store a dangling winner ID. "
+                f"FEC IDs get merged/retired; use --list on the race to find "
+                f"the surviving ID."
             )
-            winner_label = winner_id
-        else:
-            winner_label = f"{row[0]} ({row[1]}) [{winner_id}]"
+            conn.close()
+            return 1
+        winner_label = f"{row[0]} ({row[1]}) [{winner_id}]"
     elif args.winner:
         race_id = find_member_race(conn, bid, args.cycle)
         if race_id is None:
@@ -410,10 +429,15 @@ def main() -> int:
         )
         # Mirror into the reimport-safe nominee record.
         if winner_race_id:
-            upsert_primary_winner(
-                conn, winner_race_id, winner_id, args.cycle, loss_date,
-                args.decided_by, args.note,
-            )
+            try:
+                upsert_primary_winner(
+                    conn, winner_race_id, winner_id, args.cycle, loss_date,
+                    args.decided_by, args.note,
+                )
+            except ValueError as e:
+                print(f"ERROR: {e}")
+                conn.close()
+                return 1
         else:
             print(
                 f"WARNING: could not determine {args.cycle} race for {name}; "

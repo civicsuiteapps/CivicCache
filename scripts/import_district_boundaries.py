@@ -174,10 +174,29 @@ def import_districts(conn: sqlite3.Connection) -> None:
                 rounded.append(r)
         total_points_before += points_before
         total_points_after += points_after
-        total_points_before += points_before
-        total_points_after += points_after
 
-        polygons_json = json.dumps(rounded, separators=(',', ':'))
+        # Emit standard GeoJSON: the source rings are [lat,lng]; GeoJSON is
+        # a MultiPolygon geometry with [lng,lat] positions and closed rings.
+        # (Historically this column stored the raw [lat,lng] arrays and both
+        # apps grew format-sniffing parsers — real GeoJSON is the contract.)
+        def _to_geojson_ring(ring):
+            coords = [[pt[1], pt[0]] for pt in ring]
+            if coords and coords[0] != coords[-1]:
+                coords.append(list(coords[0]))
+            return coords
+
+        multipolygon = []
+        for ring in rounded:
+            if ring and isinstance(ring[0], list) and isinstance(ring[0][0], list):
+                # Nested entry: a polygon with rings (outer + holes)
+                multipolygon.append([_to_geojson_ring(r) for r in ring])
+            else:
+                multipolygon.append([_to_geojson_ring(ring)])
+
+        polygons_json = json.dumps(
+            {"type": "MultiPolygon", "coordinates": multipolygon},
+            separators=(',', ':'),
+        )
         all_points = []
         for ring in rounded:
             if ring and isinstance(ring[0], list) and isinstance(ring[0][0], list):

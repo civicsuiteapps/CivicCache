@@ -525,6 +525,59 @@ def deduplicate_candidates(
 # ---------------------------------------------------------------------------
 
 
+def load_seat_map(conn: sqlite3.Connection) -> dict[str, set[int]]:
+    """Valid House seats per state from congressional_districts.
+
+    Territories/DC store the Census delegate code 98; at-large states store 0.
+    Both are single-seat and normalize to FEC's '00'.
+    """
+    seat_map: dict[str, set[int]] = {}
+    try:
+        rows = conn.execute(
+            "SELECT state_code, district_number FROM congressional_districts "
+            "WHERE state_code IS NOT NULL"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    for state, dnum in rows:
+        seat_map.setdefault(state, set()).add(dnum)
+    return seat_map
+
+
+def normalize_house_district(
+    state: str, district: str | None, seat_map: dict[str, set[int]]
+) -> str | None:
+    """Map an FEC office_district to a canonical seat, or None if invalid.
+
+    FEC registrations carry stale district numbers (e.g. FL '59', NY '27'
+    from pre-2022 maps), blanks, and '00'/'01' variants for single-seat
+    states. Single-seat states/territories accept any value as '00';
+    multi-seat states require a district that actually exists. None means
+    the candidate belongs to no buildable race.
+    """
+    seats = seat_map.get(state)
+    if not seats:
+        return None
+    if len(seats) == 1:
+        return "00"
+    d = (district or "").strip()
+    if not d.isdigit():
+        return None
+    n = int(d)
+    return f"{n:02d}" if n in seats else None
+
+
+def _candidate_election_year_ok(election_year: int | None, cycle: int) -> bool:
+    """Keep only candidates actually running this cycle.
+
+    FEC cycle files include rolled-forward registrations for future races
+    (e.g. a 2030-class senator fundraising during 2026) and garbage years.
+    NULL is tolerated; otherwise the candidate's election year must be the
+    cycle or the odd year before it (special-election filers).
+    """
+    return election_year is None or election_year in (cycle, cycle - 1)
+
+
 def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> int:
     """Phase 3: Group candidates into election races and link incumbents."""
     print("\n  Phase 3: Building election races...")
@@ -559,102 +612,114 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
     except sqlite3.OperationalError:
         print("    Warning: congress_members table not available for incumbent matching")
 
-    # Get distinct race keys from candidates
+    seat_map = load_seat_map(conn)
+    if not seat_map:
+        print("    WARNING: congressional_districts is empty — cannot validate "
+              "House districts; races with stale/invalid districts may ship")
+
     cycle_filter = ""
+    params: list = []
     if cycles:
         placeholders = ",".join("?" * len(cycles))
         cycle_filter = f"AND election_cycle IN ({placeholders})"
+        params = list(cycles)
 
-    query = f"""
+    rows = conn.execute(
+        f"""
         SELECT election_cycle, office, office_state, office_district,
-               COUNT(*) as num_candidates
+               election_year, candidate_id, candidate_name, party_code,
+               incumbent_challenger_status
         FROM candidates
-        WHERE office IS NOT NULL AND office != ''
+        WHERE office IN ('H', 'S', 'P')
               AND office_state IS NOT NULL AND office_state != ''
               {cycle_filter}
-        GROUP BY election_cycle, office, office_state, office_district
-    """
+        """,
+        params,
+    ).fetchall()
 
-    params = list(cycles) if cycles else []
-    race_rows = conn.execute(query, params).fetchall()
+    # Group candidates by canonical race key
+    races: dict[tuple, list[tuple]] = {}
+    skipped_district = 0
+    skipped_year = 0
+    for cycle, office, state, district, eyear, cand_id, name, party, ici in rows:
+        if not _candidate_election_year_ok(eyear, cycle):
+            skipped_year += 1
+            continue
+        if office == "H":
+            norm = normalize_house_district(state, district, seat_map)
+            if seat_map and norm is None:
+                skipped_district += 1
+                continue
+            if norm is None:  # empty seat map fallback: keep raw digits only
+                d = (district or "").strip()
+                if not d.isdigit():
+                    skipped_district += 1
+                    continue
+                norm = d.zfill(2)
+            race_id = f"{cycle}-H-{state}-{norm}"
+            key = (race_id, cycle, "H", state, norm)
+        elif office == "S":
+            race_id = f"{cycle}-S-{state}"
+            key = (race_id, cycle, "S", state, None)
+        else:
+            # Presidential: one national race (state column is NOT NULL)
+            race_id = f"{cycle}-P"
+            key = (race_id, cycle, "P", "US", None)
+        races.setdefault(key, []).append((cand_id, name, party, ici))
+
+    if skipped_year:
+        print(f"    Excluded {skipped_year:,} candidates not running this cycle "
+              f"(election_year outside cycle)")
+    if skipped_district:
+        print(f"    Excluded {skipped_district:,} candidates with invalid/stale "
+              f"House districts")
+
+    def _seat_matches(member: dict, office: str, state: str, district: str | None) -> bool:
+        """A member is the race's incumbent only if it is THEIR seat.
+
+        fec_id alone is not enough: a House member running for Senate (their
+        fec_id points at the Senate candidacy) is a candidate there, not the
+        incumbent. FEC's ICI code has the same flaw — it marks any sitting
+        officeholder 'I' regardless of which seat they are running for
+        (e.g. a House member's Senate bid) — so seat identity is the only
+        reliable signal.
+        """
+        if office == "S":
+            return member["chamber"] == "Senate" and member["state_code"] == state
+        if office == "H":
+            if member["chamber"] != "House" or member["state_code"] != state:
+                return False
+            try:
+                member_d = int(member["district"] or 0)
+            except (TypeError, ValueError):
+                member_d = 0
+            if member_d == 98:  # delegate code
+                member_d = 0
+            return member_d == int(district or 0)
+        return False
 
     race_count = 0
-    for row in race_rows:
-        cycle, office, state, district, num_candidates = row
-
-        # Skip non-standard offices
-        if office not in ("H", "S", "P"):
-            continue
-
-        # Build race_id
-        if office == "H" and district:
-            race_id = f"{cycle}-{office}-{state}-{district.zfill(2)}"
-        elif office == "S":
-            race_id = f"{cycle}-{office}-{state}"
-        elif office == "P":
-            race_id = f"{cycle}-{office}"
-        else:
-            race_id = f"{cycle}-{office}-{state}"
-
-        # Find incumbent in this race
+    for (race_id, cycle, office, state, district), members in races.items():
+        num_candidates = len(members)
         incumbent_bioguide = None
         incumbent_fec_id = None
         incumbent_party = None
-        challenger_count = 0
-        open_seat = 0
-
-        # Get candidates for this race
-        cand_query = f"""
-            SELECT candidate_id, candidate_name, party_code,
-                   incumbent_challenger_status, total_receipts
-            FROM candidates
-            WHERE election_cycle = ? AND office = ? AND office_state = ?
-                  AND (office_district = ? OR (? IS NULL AND office_district IS NULL)
-                       OR office_district = '' OR office_district = '00')
-        """
-        # For Senate/President, match regardless of district
-        if office in ("S", "P"):
-            cand_query = f"""
-                SELECT candidate_id, candidate_name, party_code,
-                       incumbent_challenger_status, total_receipts
-                FROM candidates
-                WHERE election_cycle = ? AND office = ? AND office_state = ?
-            """
-            race_candidates = conn.execute(
-                cand_query, (cycle, office, state)
-            ).fetchall()
-        else:
-            race_candidates = conn.execute(
-                cand_query, (cycle, office, state, district, district)
-            ).fetchall()
 
         has_incumbent = False
-        for cand in race_candidates:
-            cand_id, cand_name, party, ici, receipts = cand
-
-            # Check if this candidate is a known incumbent
-            if cand_id in incumbent_lookup:
-                incumbent_bioguide = incumbent_lookup[cand_id]["bioguide_id"]
+        for cand_id, name, party, ici in members:
+            member = incumbent_lookup.get(cand_id)
+            if member and _seat_matches(member, office, state, district):
+                incumbent_bioguide = member["bioguide_id"]
                 incumbent_fec_id = cand_id
-                incumbent_party = incumbent_lookup[cand_id]["party"]
+                incumbent_party = member["party"]
                 has_incumbent = True
-            elif ici == "I":
-                incumbent_fec_id = cand_id
-                incumbent_party = party
-                has_incumbent = True
-                challenger_count = num_candidates - 1
-            elif ici == "C":
-                challenger_count += 1
+                break
 
-        if not has_incumbent:
-            # Check if any candidate is marked as Open seat
-            open_markers = [c for c in race_candidates if c[3] == "O"]
-            if open_markers:
-                open_seat = 1
-            challenger_count = num_candidates
-
-        if has_incumbent:
-            challenger_count = num_candidates - 1
+        # No sitting member running for this seat => open race. Derived
+        # structurally rather than from FEC 'O' markers, which inherit the
+        # same seat-attribution unreliability as 'I' (see above).
+        open_seat = 0 if has_incumbent or office == "P" else 1
+        challenger_count = num_candidates - 1 if has_incumbent else num_candidates
 
         conn.execute(
             """
@@ -669,7 +734,7 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
                 cycle,
                 office,
                 state,
-                district if office == "H" else None,
+                district,
                 incumbent_bioguide,
                 incumbent_fec_id,
                 incumbent_party,
@@ -701,58 +766,96 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
         cycle_filter = f"WHERE election_cycle IN ({placeholders})"
         params = list(cycles)
 
-    # For each race, insert its candidates
-    races = conn.execute(
-        f"SELECT race_id, election_cycle, office, state, district FROM election_races {cycle_filter}",
+    # Existing race_ids, so candidates map only into races Phase 3 built
+    race_ids = {
+        r[0]
+        for r in conn.execute(
+            f"SELECT race_id FROM election_races {cycle_filter}", params
+        ).fetchall()
+    }
+
+    seat_map = load_seat_map(conn)
+
+    rows = conn.execute(
+        f"""
+        SELECT election_cycle, office, office_state, office_district,
+               election_year, candidate_id, candidate_name, party_code,
+               incumbent_challenger_status, total_receipts,
+               cash_on_hand, total_individual_contributions,
+               principal_committee_id
+        FROM candidates
+        WHERE office IN ('H', 'S', 'P')
+              AND office_state IS NOT NULL AND office_state != ''
+              {"AND election_cycle IN (%s)" % ",".join("?" * len(params)) if params else ""}
+        ORDER BY total_receipts DESC NULLS LAST
+        """,
         params,
     ).fetchall()
 
     total = 0
-    for race in races:
-        race_id, cycle, office, state, district = race
+    for row in rows:
+        (cycle, office, state, district, eyear, cand_id, name, party, ici,
+         receipts, cash, indiv, pcc) = row
 
-        if office in ("S", "P"):
-            candidates = conn.execute(
-                """
-                SELECT candidate_id, candidate_name, party_code,
-                       incumbent_challenger_status, total_receipts,
-                       cash_on_hand, total_individual_contributions,
-                       principal_committee_id
-                FROM candidates
-                WHERE election_cycle = ? AND office = ? AND office_state = ?
-                ORDER BY total_receipts DESC NULLS LAST
-                """,
-                (cycle, office, state),
-            ).fetchall()
+        if not _candidate_election_year_ok(eyear, cycle):
+            continue
+
+        # Same race-key derivation as Phase 3
+        if office == "H":
+            norm = normalize_house_district(state, district, seat_map)
+            if norm is None:
+                d = (district or "").strip()
+                if seat_map or not d.isdigit():
+                    continue
+                norm = d.zfill(2)
+            race_id = f"{cycle}-H-{state}-{norm}"
+        elif office == "S":
+            race_id = f"{cycle}-S-{state}"
         else:
-            candidates = conn.execute(
-                """
-                SELECT candidate_id, candidate_name, party_code,
-                       incumbent_challenger_status, total_receipts,
-                       cash_on_hand, total_individual_contributions,
-                       principal_committee_id
-                FROM candidates
-                WHERE election_cycle = ? AND office = ? AND office_state = ?
-                      AND (office_district = ? OR office_district = '' OR office_district = '00')
-                ORDER BY total_receipts DESC NULLS LAST
-                """,
-                (cycle, office, state, district),
-            ).fetchall()
+            race_id = f"{cycle}-P"
 
-        for cand in candidates:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO race_candidates (
-                    race_id, candidate_id, election_cycle,
-                    candidate_name, party_code, incumbent_challenger_status,
-                    total_receipts, cash_on_hand, total_individual_contributions,
-                    principal_committee_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (race_id, cand[0], cycle, cand[1], cand[2], cand[3],
-                 cand[4], cand[5], cand[6], cand[7]),
-            )
-            total += 1
+        if race_id not in race_ids:
+            continue
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO race_candidates (
+                race_id, candidate_id, election_cycle,
+                candidate_name, party_code, incumbent_challenger_status,
+                total_receipts, cash_on_hand, total_individual_contributions,
+                principal_committee_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (race_id, cand_id, cycle, name, party, ici,
+             receipts, cash, indiv, pcc),
+        )
+        total += 1
+
+    # Normalize incumbent flags to Phase 3's seat-verified attribution: FEC
+    # marks any sitting officeholder 'I' even in a race for a DIFFERENT seat
+    # (a House member's Senate bid), which the apps would render as a second
+    # incumbent. Demote those, then stamp the verified incumbent.
+    conn.execute(
+        """
+        UPDATE race_candidates SET incumbent_challenger_status = 'C'
+        WHERE incumbent_challenger_status = 'I'
+          AND NOT EXISTS (
+            SELECT 1 FROM election_races er
+            WHERE er.race_id = race_candidates.race_id
+              AND er.incumbent_fec_id = race_candidates.candidate_id
+        )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE race_candidates SET incumbent_challenger_status = 'I'
+        WHERE EXISTS (
+            SELECT 1 FROM election_races er
+            WHERE er.race_id = race_candidates.race_id
+              AND er.incumbent_fec_id = race_candidates.candidate_id
+        )
+        """
+    )
 
     conn.commit()
     print(f"    Inserted {total:,} race_candidates rows")
@@ -840,6 +943,39 @@ def restore_enrichment(conn: sqlite3.Connection) -> int:
     conn.commit()
     print(f"  Restored enrichment data for {restored:,} race_candidates rows")
     return restored
+
+
+def validate_primary_winners(conn: sqlite3.Connection) -> int:
+    """Data gate: every curated primary winner must survive the rebuild.
+
+    primary_winners is manually curated and intentionally not dropped by this
+    import; if the FEC retires a winner's candidate_id (ID merges happen),
+    the join the apps rely on breaks. Fail loudly so the winner can be
+    remapped via log_primary_loss.py instead of shipping a dangling row.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT pw.race_id, pw.party, pw.candidate_id
+            FROM primary_winners pw
+            LEFT JOIN race_candidates rc
+                ON rc.race_id = pw.race_id AND rc.candidate_id = pw.candidate_id
+            LEFT JOIN candidates c
+                ON c.candidate_id = pw.candidate_id
+                AND c.election_cycle = pw.election_cycle
+            WHERE rc.candidate_id IS NULL OR c.candidate_id IS NULL
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return 0  # no primary_winners table (fresh DB)
+    if rows:
+        print(f"\n  VALIDATION FAILED: {len(rows)} primary_winners row(s) with no "
+              f"matching race_candidates/candidates row:")
+        for race_id, party, cand_id in rows:
+            print(f"    {race_id} {party}: {cand_id}")
+        print("  The FEC likely retired these candidate IDs. Remap each winner "
+              "to the surviving ID with scripts/log_primary_loss.py.")
+    return len(rows)
 
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
@@ -1048,6 +1184,12 @@ def main() -> int:
         print("\n--- Phase 4.5: Restore Enrichment ---")
         restore_enrichment(conn)
 
+        # Phase 4.6: Curated primary winners must still join cleanly
+        print("\n--- Phase 4.6: Validate Primary Winners ---")
+        dangling_winners = validate_primary_winners(conn)
+        if dangling_winners == 0:
+            print("  All primary winners resolve")
+
         # Rebuild FTS
         print("\n  Rebuilding candidates FTS...")
         rebuild_candidates_fts(conn)
@@ -1106,6 +1248,10 @@ def main() -> int:
             ).fetchone()
             if race_stats and race_stats[0]:
                 print(f"\n  2026 Races: {race_stats[0]} total, {race_stats[1]} with incumbent, {race_stats[2]} open seats")
+
+        if dangling_winners:
+            print(f"\nIMPORT FAILED VALIDATION: {dangling_winners} dangling primary winner(s)")
+            return 1
 
         return 0
 

@@ -435,6 +435,62 @@ def run_health_check(json_output: bool = False) -> int:
     except Exception as e:
         _check("attribution_plain_text", False, str(e))
 
+    # 8. Curated primary winners join to race_candidates AND candidates
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM primary_winners pw "
+            "LEFT JOIN race_candidates rc "
+            "  ON rc.race_id = pw.race_id AND rc.candidate_id = pw.candidate_id "
+            "LEFT JOIN candidates c "
+            "  ON c.candidate_id = pw.candidate_id AND c.election_cycle = pw.election_cycle "
+            "WHERE rc.candidate_id IS NULL OR c.candidate_id IS NULL"
+        ).fetchone()[0]
+        _check("primary_winner_integrity", n == 0, f"{n} dangling" if n else "all resolve")
+    except Exception as e:
+        _check("primary_winner_integrity", False, str(e))
+
+    # 9. committees_fts in sync with committees
+    try:
+        fts_n = conn.execute("SELECT COUNT(*) FROM committees_fts").fetchone()[0]
+        base_n = conn.execute("SELECT COUNT(*) FROM committees").fetchone()[0]
+        _check("committees_fts_sync", fts_n == base_n, f"{fts_n:,} fts vs {base_n:,} base")
+    except Exception as e:
+        _check("committees_fts_sync", False, str(e))
+
+    # 10. Every House race maps to a real seat (delegate 98 files as '00');
+    #     no district-less or phantom-district races
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM election_races er WHERE er.office = 'H' AND ("
+            "  er.district IS NULL OR NOT EXISTS ("
+            "    SELECT 1 FROM congressional_districts cd "
+            "    WHERE cd.state_code = er.state "
+            "      AND printf('%02d', CASE WHEN cd.district_number = 98 THEN 0 "
+            "                              ELSE cd.district_number END) = er.district))"
+        ).fetchone()[0]
+        _check("race_districts_valid", n == 0, f"{n} invalid" if n else "all valid")
+    except Exception as e:
+        _check("race_districts_valid", False, str(e))
+
+    # 11. District boundaries are real GeoJSON ([lng,lat]; US => |lng| > |lat|)
+    try:
+        bad = 0
+        for (gj,) in conn.execute("SELECT geojson FROM congressional_districts"):
+            try:
+                g = json.loads(gj)
+                if not (isinstance(g, dict) and g.get("type") in ("Polygon", "MultiPolygon")):
+                    bad += 1
+                    continue
+                c = g["coordinates"]
+                first = c[0][0][0] if g["type"] == "MultiPolygon" else c[0][0]
+                if abs(first[0]) <= abs(first[1]):
+                    bad += 1
+            except Exception:
+                bad += 1
+        _check("district_geojson_format", bad == 0, f"{bad} malformed" if bad else "valid GeoJSON")
+    except Exception as e:
+        _check("district_geojson_format", False, str(e))
+
     conn.close()
 
     # Output

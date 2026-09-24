@@ -257,7 +257,7 @@ def main() -> int:
     parser.add_argument(
         "--decided-by",
         default="primary",
-        choices=["primary", "runoff", "top-two", "rcv", "convention"],
+        choices=["primary", "runoff", "top-two", "top-four", "rcv", "convention"],
         help="How the nomination was decided (default: primary)",
     )
     parser.add_argument(

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import DB_PATH
+from import_fec_candidates import _not_running, load_retirements
 
 OPENFEC_BASE = "https://api.open.fec.gov/v1"
 COOLDOWN_DAYS = 7
@@ -126,8 +127,14 @@ def update_race_candidates(
     if not data or "results" not in data:
         return 0
 
+    # Curated retirees (data/retirements_2026.csv) stay out of their old
+    # seat's race even though OpenFEC still lists them as active candidates.
+    retirements = load_retirements(conn)
+
     updated = 0
     for cand in data["results"]:
+        if _not_running(retirements, race_id, cand.get("candidate_id", "")):
+            continue
         cand_id = cand.get("candidate_id")
         if not cand_id:
             continue

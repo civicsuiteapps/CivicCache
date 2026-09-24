@@ -23,6 +23,7 @@ digest (scripts/digest.py) and the CacheStatus menu-bar app.
 """
 
 import argparse
+import csv
 import json
 import sqlite3
 import sys
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 # config must be imported first: it loads .env and puts cachecore on sys.path
-from config import CONGRESS_NUMBER, DB_PATH, PROJECT_ROOT, SCRIPTS_DIR
+from config import CONGRESS_NUMBER, DB_PATH, PROJECT_ROOT, RETIREMENTS_CSV, SCRIPTS_DIR
 
 from cachecore.runner import (
     Stage,
@@ -490,6 +491,54 @@ def run_health_check(json_output: bool = False) -> int:
         _check("district_geojson_format", bad == 0, f"{bad} malformed" if bad else "valid GeoJSON")
     except Exception as e:
         _check("district_geojson_format", False, str(e))
+
+    # 12. Curated retirements applied: a member listed in
+    #     data/retirements_2026.csv must not still be the race's incumbent
+    #     (open_seat = 0) nor sit in race_candidates for that race. FEC data
+    #     alone can't see a run for state office, so this is the only guard
+    #     against e.g. Tuberville shipping as the 2026-S-AL incumbent.
+    try:
+        bad_races = []
+        n_rows = 0
+        if RETIREMENTS_CSV.exists():
+            with RETIREMENTS_CSV.open(newline="", encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    race_id = (row.get("race_id") or "").strip()
+                    bioguide = (row.get("bioguide_id") or "").strip()
+                    fec_id = (row.get("fec_candidate_id") or "").strip()
+                    if not race_id or not bioguide:
+                        continue
+                    n_rows += 1
+                    race = conn.execute(
+                        "SELECT open_seat, incumbent_bioguide_id, incumbent_fec_id "
+                        "FROM election_races WHERE race_id = ?",
+                        (race_id,),
+                    ).fetchone()
+                    if race is None:
+                        continue  # no such race built (nobody filed) -- nothing to gate
+                    open_seat, inc_bid, inc_fec = race
+                    still_listed = conn.execute(
+                        "SELECT COUNT(*) FROM race_candidates rc "
+                        "JOIN congress_members m ON m.id = ? "
+                        "WHERE rc.race_id = ? AND (rc.candidate_id = ? OR rc.candidate_id = m.fec_id)",
+                        (bioguide, race_id, fec_id or "-"),
+                    ).fetchone()[0]
+                    if (
+                        inc_bid == bioguide
+                        or (fec_id and inc_fec == fec_id)
+                        or (open_seat == 0 and inc_bid is None)
+                        or still_listed
+                    ):
+                        bad_races.append(race_id)
+        _check(
+            "retirements_applied",
+            len(bad_races) == 0,
+            f"{len(bad_races)} race(s) still show a retiree as incumbent/candidate: "
+            f"{', '.join(bad_races)}" if bad_races
+            else (f"{n_rows} curated retirement(s) honored" if n_rows else "no retirements file"),
+        )
+    except Exception as e:
+        _check("retirements_applied", False, str(e))
 
     conn.close()
 

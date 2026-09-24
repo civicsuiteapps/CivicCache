@@ -25,14 +25,24 @@ Rules:
   vote_staleness     -- votes metadata not updated in 14+ days
   winner_integrity   -- primary_winners rows orphaned by an FEC reimport
                         (race_candidates is dropped/rebuilt on every import)
+  uncurated_primaries -- current-cycle races whose state primary (per
+                        primary_calendar) has passed but that have no
+                        primary_winners row at all -- nominee curation backlog
+  retirements        -- a member in data/retirements_2026.csv still shows as
+                        a race's incumbent / candidate (override not applied)
+
+primary_calendar note convention: a note starting with "office=H" or
+"office=S" scopes that date to one chamber (Louisiana's 2026 House jungle
+primary is on general-election day while its Senate primary was in May).
 """
 
 import argparse
+import csv
 import json
 import sys
 
 # config first: loads .env (NTFY_TOPIC) and puts cachecore on sys.path
-from config import DB_PATH, PROJECT_ROOT
+from config import DB_PATH, PROJECT_ROOT, RETIREMENTS_CSV
 
 from cachecore.digest import Context, Finding, Rule, run_digest
 
@@ -232,6 +242,100 @@ def rule_winner_integrity(conn, ctx: Context):
     ]
 
 
+def rule_uncurated_primaries(conn, ctx: Context):
+    """Races whose primary date has passed with no nominee recorded.
+
+    One finding per state (a single House state can owe dozens of races);
+    the key carries the count so the alert re-fires only when the backlog
+    changes. Only 'primary' / 'special-primary' calendar rows count -- a
+    runoff never precedes the primary. Calendar notes beginning "office=H"
+    or "office=S" restrict the date to that chamber.
+    """
+    cycle = ctx.today.year if ctx.today.year % 2 == 0 else ctx.today.year + 1
+    # A Senate race only exists where a senator's term ends this cycle
+    # (regular class or a special); FEC filers for later cycles otherwise
+    # produce phantom 2026-S-XX races that would sit in the backlog forever.
+    rows = conn.execute(
+        """
+        SELECT er.state, er.office, er.race_id, MAX(pc.election_date)
+        FROM election_races er
+        JOIN primary_calendar pc
+          ON pc.state_code = er.state
+         AND pc.election_type IN ('primary', 'special-primary')
+         AND pc.election_date < ?
+         AND (pc.note IS NULL OR pc.note NOT LIKE 'office=%'
+              OR pc.note LIKE 'office=' || er.office || '%')
+        WHERE er.election_cycle = ?
+          AND er.office IN ('H', 'S')
+          AND er.total_candidates > 0
+          AND (er.office = 'H' OR EXISTS (
+              SELECT 1 FROM congress_members s
+              WHERE s.chamber = 'Senate' AND s.state_code = er.state
+                AND s.term_end_date BETWEEN ? || '-01-01' AND (? + 1) || '-01-03'))
+          AND NOT EXISTS (
+              SELECT 1 FROM primary_winners pw WHERE pw.race_id = er.race_id)
+        GROUP BY er.race_id
+        ORDER BY er.state, er.office, er.race_id
+        """,
+        (ctx.today.isoformat(), cycle, str(cycle), cycle),
+    ).fetchall()
+    by_state: dict = {}
+    for state, office, race_id, pdate in rows:
+        by_state.setdefault(state, []).append((race_id, pdate))
+    findings = []
+    for state, races in sorted(by_state.items()):
+        ids = ", ".join(r for r, _ in races)
+        findings.append(
+            Finding(
+                key=f"uncurated:{state}:{len(races)}",
+                title=f"{state}: {len(races)} race(s) past primary with no nominee logged",
+                detail=f"log_primary_loss.py --race <id> --winner-id <FEC id>. {ids}"[:400],
+                severity="action",
+            )
+        )
+    return findings
+
+
+def rule_retirements(conn, ctx: Context):
+    """Curated retirees must not survive as a race's incumbent/candidate."""
+    if not RETIREMENTS_CSV.exists():
+        return []
+    findings = []
+    with RETIREMENTS_CSV.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            race_id = (row.get("race_id") or "").strip()
+            bioguide = (row.get("bioguide_id") or "").strip()
+            fec_id = (row.get("fec_candidate_id") or "").strip()
+            if not race_id or not bioguide:
+                continue
+            hit = conn.execute(
+                """
+                SELECT er.open_seat, er.incumbent_bioguide_id,
+                       (SELECT COUNT(*) FROM race_candidates rc
+                         JOIN congress_members m ON m.id = ?
+                        WHERE rc.race_id = er.race_id
+                          AND (rc.candidate_id = ? OR rc.candidate_id = m.fec_id))
+                FROM election_races er WHERE er.race_id = ?
+                """,
+                (bioguide, fec_id or "-", race_id),
+            ).fetchone()
+            if hit is None:
+                continue
+            open_seat, inc_bid, listed = hit
+            if inc_bid == bioguide or listed:
+                findings.append(
+                    Finding(
+                        key=f"retiree-listed:{race_id}:{bioguide}",
+                        title=f"{race_id}: retiree {bioguide} still incumbent/candidate "
+                              f"(open_seat={open_seat})",
+                        detail="Re-run import_fec_candidates.py so the retirements "
+                               "override is applied.",
+                        severity="action",
+                    )
+                )
+    return findings
+
+
 RULES = [
     Rule("primaries", rule_primaries),
     Rule("pending_winners", rule_pending_winners),
@@ -241,6 +345,8 @@ RULES = [
     Rule("membership_change", rule_membership_change),
     Rule("vote_staleness", rule_vote_staleness),
     Rule("winner_integrity", rule_winner_integrity),
+    Rule("uncurated_primaries", rule_uncurated_primaries),
+    Rule("retirements", rule_retirements),
 ]
 
 COUNTS_QUERIES = {

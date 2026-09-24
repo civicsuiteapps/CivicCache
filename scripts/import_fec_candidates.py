@@ -19,13 +19,15 @@ Usage:
 """
 
 import argparse
+import csv
 import math
 import re
 import sqlite3
 import sys
+from datetime import date
 from pathlib import Path
 
-from config import DB_PATH, FEC_DIR
+from config import DB_PATH, FEC_DIR, RETIREMENTS_CSV
 
 # CivicScope only uses current election data — skip historical cycles
 MIN_ELECTION_CYCLE = 2024
@@ -578,9 +580,69 @@ def _candidate_election_year_ok(election_year: int | None, cycle: int) -> bool:
     return election_year is None or election_year in (cycle, cycle - 1)
 
 
+def load_retirements(
+    conn: sqlite3.Connection, path: Path = RETIREMENTS_CSV
+) -> dict[str, dict]:
+    """Curated 'not running for this seat' overrides, keyed by race_id.
+
+    FEC filings cannot reveal a retirement or a run for state office: the
+    member's federal committee stays active (still raising money, still
+    marked 'I'), so structurally the race looks contested by its incumbent.
+    data/retirements_2026.csv lists those members. For each row we resolve
+    every FEC candidate id that belongs to the member (the id in the CSV plus
+    congress_members.fec_id) so the candidate can be dropped from the race
+    and the seat recorded as open.
+
+    Returns {race_id: {"bioguide_id", "candidate_ids": set, "reason"}}.
+    Missing file => {} (no overrides).
+    """
+    if not path.exists():
+        return {}
+    fec_by_bioguide: dict[str, str] = {}
+    try:
+        for bid, fec_id in conn.execute(
+            "SELECT id, fec_id FROM congress_members WHERE fec_id IS NOT NULL"
+        ):
+            fec_by_bioguide[bid] = fec_id
+    except sqlite3.OperationalError:
+        pass
+    retirements: dict[str, dict] = {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            race_id = (row.get("race_id") or "").strip()
+            bioguide = (row.get("bioguide_id") or "").strip()
+            if not race_id or not bioguide:
+                continue
+            ids = {
+                (row.get("fec_candidate_id") or "").strip(),
+                fec_by_bioguide.get(bioguide, ""),
+            }
+            ids.discard("")
+            retirements[race_id] = {
+                "bioguide_id": bioguide,
+                "candidate_ids": ids,
+                "reason": (row.get("reason") or "").strip(),
+            }
+    return retirements
+
+
+def _not_running(retirements: dict[str, dict], race_id: str, cand_id: str) -> bool:
+    """True when the curated retirements list says cand_id isn't seeking race_id."""
+    entry = retirements.get(race_id)
+    return bool(entry) and cand_id in entry["candidate_ids"]
+
+
 def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> int:
     """Phase 3: Group candidates into election races and link incumbents."""
     print("\n  Phase 3: Building election races...")
+
+    retirements = load_retirements(conn)
+    if retirements:
+        print(f"    Loaded {len(retirements)} curated retirement(s) from "
+              f"{RETIREMENTS_CSV.name}")
+    else:
+        print(f"    No retirements file at {RETIREMENTS_CSV} -- open seats "
+              f"derived from FEC filings only")
 
     # Clear existing races for these cycles
     if cycles:
@@ -591,17 +653,27 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
         conn.execute("DELETE FROM race_candidates")
         conn.execute("DELETE FROM election_races")
 
-    # Build a lookup of congress_members by fec_id for incumbent matching
+    # Build a lookup of congress_members by fec_id for incumbent matching.
+    # Members who have already left office (resigned, died, term ended) are
+    # excluded: their committee can linger in the FEC data with an 'I' flag,
+    # but a vacated seat has no incumbent -- the successor (if any) is
+    # matched through their own fec_id instead.
     incumbent_lookup = {}
+    today = date.today().isoformat()
+    departed = 0
     try:
         rows = conn.execute(
             """
-            SELECT id, fec_id, current_party, chamber, state_code, district
+            SELECT id, fec_id, current_party, chamber, state_code, district,
+                   term_end_date
             FROM congress_members
             WHERE fec_id IS NOT NULL AND fec_id != ''
             """
         ).fetchall()
         for row in rows:
+            if row[6] and row[6] < today:
+                departed += 1
+                continue
             incumbent_lookup[row[1]] = {
                 "bioguide_id": row[0],
                 "party": row[2],
@@ -611,6 +683,9 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
             }
     except sqlite3.OperationalError:
         print("    Warning: congress_members table not available for incumbent matching")
+    if departed:
+        print(f"    Ignoring {departed} former member(s) whose term already "
+              f"ended (vacated seats have no incumbent)")
 
     seat_map = load_seat_map(conn)
     if not seat_map:
@@ -641,6 +716,7 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
     races: dict[tuple, list[tuple]] = {}
     skipped_district = 0
     skipped_year = 0
+    not_running: list[tuple[str, str, str]] = []
     for cycle, office, state, district, eyear, cand_id, name, party, ici in rows:
         if not _candidate_election_year_ok(eyear, cycle):
             skipped_year += 1
@@ -665,6 +741,13 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
             # Presidential: one national race (state column is NOT NULL)
             race_id = f"{cycle}-P"
             key = (race_id, cycle, "P", "US", None)
+        # Curated override: a sitting member who announced retirement or a
+        # run for another office is not a candidate for this seat, whatever
+        # their still-active FEC committee says. Dropped from the race
+        # entirely (see docs/DATABASE.md, "Retirements override").
+        if _not_running(retirements, race_id, cand_id):
+            not_running.append((race_id, cand_id, name))
+            continue
         races.setdefault(key, []).append((cand_id, name, party, ici))
 
     if skipped_year:
@@ -673,6 +756,17 @@ def build_election_races(conn: sqlite3.Connection, cycles: set[int] | None) -> i
     if skipped_district:
         print(f"    Excluded {skipped_district:,} candidates with invalid/stale "
               f"House districts")
+    if not_running:
+        print(f"    Dropped {len(not_running)} curated retiree filing(s) from "
+              f"their old seat's race:")
+        for race_id, cand_id, name in not_running:
+            print(f"      {race_id}: {name} [{cand_id}] -- "
+                  f"{retirements[race_id]['reason'] or 'not running'}")
+    for race_id, entry in retirements.items():
+        applied = any(r == race_id for r, _, _ in not_running)
+        if not applied and (cycles is None or int(race_id[:4]) in cycles):
+            print(f"      note: {race_id} retiree {entry['bioguide_id']} has no "
+                  f"filing in this race (already absent -- override is a no-op)")
 
     def _seat_matches(member: dict, office: str, state: str, district: str | None) -> bool:
         """A member is the race's incumbent only if it is THEIR seat.
@@ -775,6 +869,7 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
     }
 
     seat_map = load_seat_map(conn)
+    retirements = load_retirements(conn)
 
     rows = conn.execute(
         f"""
@@ -816,6 +911,8 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
 
         if race_id not in race_ids:
             continue
+        if _not_running(retirements, race_id, cand_id):
+            continue  # same curated drop as Phase 3
 
         conn.execute(
             """
@@ -854,6 +951,30 @@ def populate_race_candidates(conn: sqlite3.Connection, cycles: set[int] | None) 
             WHERE er.race_id = race_candidates.race_id
               AND er.incumbent_fec_id = race_candidates.candidate_id
         )
+        """
+    )
+    # A verified incumbent whose FEC party code is blank/UNK (it happens --
+    # e.g. Risch's 2026 Senate filing) takes the party congress_members
+    # knows; otherwise primary_winners would key the nominee under 'UNK'.
+    conn.execute(
+        """
+        UPDATE race_candidates SET party_code = (
+            SELECT CASE er.incumbent_party
+                       WHEN 'Republican' THEN 'REP'
+                       WHEN 'Democratic' THEN 'DEM'
+                       WHEN 'Democrat' THEN 'DEM'
+                       WHEN 'Independent' THEN 'IND'
+                       ELSE race_candidates.party_code END
+            FROM election_races er
+            WHERE er.race_id = race_candidates.race_id
+              AND er.incumbent_fec_id = race_candidates.candidate_id
+        )
+        WHERE (party_code IS NULL OR party_code IN ('', 'UNK', 'NON', 'NNE'))
+          AND EXISTS (
+            SELECT 1 FROM election_races er
+            WHERE er.race_id = race_candidates.race_id
+              AND er.incumbent_fec_id = race_candidates.candidate_id
+          )
         """
     )
 

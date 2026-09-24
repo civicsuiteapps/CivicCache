@@ -26,6 +26,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "civic_cache.db"
+# Curated list of sitting members NOT running for their own seat this cycle
+# (retiring / running for another office). FEC filings alone can't tell --
+# a Senate committee stays active while its senator runs for governor.
+RETIREMENTS_CSV = DATA_DIR / "retirements_2026.csv"
 FEC_DIR = PROJECT_ROOT / "FEC-Bulk-Data"
 
 # ---------------------------------------------------------------------------

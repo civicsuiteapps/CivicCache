@@ -465,6 +465,93 @@ CREATE TABLE race_candidates (
 );
 ```
 
+#### Incumbent attribution and the retirements override
+
+`election_races.incumbent_*` and `open_seat` are derived structurally by
+`import_fec_candidates.py`: a race has an incumbent only when a sitting member
+(`congress_members`, `term_end_date` not yet passed) has an FEC filing in the
+race **for their own seat**. FEC's `ICI` code is not trusted (it marks a House
+member's Senate bid 'I'), and members who resigned or died are ignored so a
+vacated seat reads as open unless a successor has filed.
+
+FEC data still cannot see a member who is retiring or running for a *state*
+office -- the federal committee stays active and keeps filing (Tuberville's
+Senate committee while he runs for Governor of Alabama). Those cases live in
+the curated file **`data/retirements_2026.csv`**:
+
+| column | meaning |
+|---|---|
+| `bioguide_id` | the member not seeking this seat |
+| `fec_candidate_id` | their FEC id as it appears in the race (or their current `congress_members.fec_id`) |
+| `race_id` | the seat they are leaving, e.g. `2026-S-AL` |
+| `reason` | `retiring`, `running for Governor of Alabama`, `running for U.S. Senate`, ... |
+| `source_url` | announcement coverage / press release |
+| `announced_date` | YYYY-MM-DD |
+
+On import, every FEC id belonging to that member (the CSV id plus
+`congress_members.fec_id`) is **dropped from the race entirely**: no
+`race_candidates` row, `open_seat = 1`, `incumbent_bioguide_id` /
+`incumbent_fec_id` / `incumbent_party` NULL, and
+`challenger_count = total_candidates` (both exclude the retiree). Dropping
+rather than keeping a row with a "not running" status was chosen because the
+apps resolve a member's *own* race through their fec_id in `race_candidates`
+-- a lingering row would render the nominees as the retiree's "opponents" and
+list him as a candidate on the race screen. With no row, `isIncumbent` (`== 'I'`)
+never sees him and the member page simply has no 2026 race, which is the
+truth. The `candidates` table (raw FEC record) is untouched.
+
+Gates: `update.py --check` (`retirements_applied`) and the digest rule
+`retirements` fail when a listed member is still a race's incumbent or still
+sits in that race's `race_candidates`.
+
+### primary_winners
+
+Curated party nominees, one row per `(race_id, party)`; maintained with
+`scripts/log_primary_loss.py` (`--race <id> --winner-id <FEC id> --date
+<primary date> [--decided-by primary|runoff|top-two|top-four|rcv|convention]`).
+`party` is copied from the nominee's `race_candidates.party_code` (Minnesota
+Democrats are therefore `DFL`). Kept in a separate table because the FEC
+import drops and rebuilds `race_candidates`; the import then validates that
+every winner still joins (`validate_primary_winners`, health check
+`primary_winner_integrity`). Apps fall back to the full field for any race
+with no rows, so a top-two race that sent two same-party candidates to
+November (nine California districts in 2026) is intentionally left
+uncurated rather than misrepresented as having one nominee.
+
+```sql
+CREATE TABLE primary_winners (
+    race_id TEXT NOT NULL,
+    party TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,           -- must exist in race_candidates for race_id
+    election_cycle INTEGER NOT NULL,
+    won_date TEXT,                        -- primary or runoff date
+    decided_by TEXT,                      -- primary | runoff | top-two | top-four | rcv | convention
+    note TEXT,                            -- source URL
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (race_id, party)
+);
+```
+
+### primary_calendar
+
+Every state primary and runoff for the cycle (pipeline-only; drives the digest
+rules `primaries` and `uncurated_primaries`). `election_type` is `primary`,
+`runoff` or `special-primary`. A `note` beginning `office=H` or `office=S`
+scopes the date to one chamber -- Louisiana's 2026 Senate primary was May 16 /
+June 27 while its House races use a jungle primary on November 3 (runoff
+December 12); Alabama re-ran CDs 1, 2, 6 and 7 on August 11 after redistricting.
+
+```sql
+CREATE TABLE primary_calendar (
+    state_code    TEXT NOT NULL,
+    election_date TEXT NOT NULL,              -- YYYY-MM-DD
+    election_type TEXT NOT NULL DEFAULT 'primary',
+    note          TEXT,
+    PRIMARY KEY (state_code, election_date)
+);
+```
+
 ### candidate_committee_linkages
 
 ```sql

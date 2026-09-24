@@ -235,18 +235,33 @@ def main() -> int:
             url = f"{BASE_URL}/{cycle}/{filename}"
             dest = args.dest / subdir / filename
 
+            # --force: fetch into a temp file and only replace the existing
+            # zip + extracted txt once the download succeeded. Deleting first
+            # (the old behaviour) wiped Candidate-Master_2025-2026.txt when
+            # the 2026-09-01 monthly run hit a DNS outage, and the next
+            # import_fec_candidates run rebuilt 2026 races from stale files.
             if args.force and dest.exists():
-                size_mb = dest.stat().st_size / (1024 * 1024)
-                print(f"  Force: removing {dest.name} ({size_mb:.1f} MB)")
-                dest.unlink()
-                # Also remove the previously extracted txt file
-                if tkey in EXTRACT_NAMES:
-                    _, out_tpl = EXTRACT_NAMES[tkey]
-                    old_txt = dest.parent / out_tpl.format(y1=cycle - 1, y2=cycle)
-                    if old_txt.exists():
-                        old_txt.unlink()
+                tmp = dest.with_name(dest.name + ".part")
+                if tmp.exists():
+                    tmp.unlink()
+                success = download_file(url, tmp)
+                if success:
+                    size_mb = dest.stat().st_size / (1024 * 1024)
+                    print(f"  Force: replacing {dest.name} ({size_mb:.1f} MB)")
+                    dest.unlink()
+                    tmp.rename(dest)
+                    if tkey in EXTRACT_NAMES:
+                        _, out_tpl = EXTRACT_NAMES[tkey]
+                        old_txt = dest.parent / out_tpl.format(y1=cycle - 1, y2=cycle)
+                        if old_txt.exists():
+                            old_txt.unlink()
+                else:
+                    if tmp.exists():
+                        tmp.unlink()
+                    print(f"    keeping existing {dest.name} (download failed)")
+            else:
+                success = download_file(url, dest)
 
-            success = download_file(url, dest)
             if success:
                 extract_zip(dest, tkey, cycle)
                 ok += 1
